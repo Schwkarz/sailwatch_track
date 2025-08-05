@@ -3,9 +3,27 @@ import { sensor } from '@kit.SensorServiceKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import window from '@ohos.window';
 import { geoLocationManager } from '@kit.LocationKit';
+import { rcp } from '@kit.RemoteCommunicationKit';
+import http from '@ohos.net.http';
 
 //gps定时器
 let gpsTimer: number | undefined = undefined;
+
+// 1. 定义必要的接口
+interface TestData {
+  key1: string;
+  key2: string;
+}
+
+interface HttpHeaders {
+  "Content-Type": string;
+}
+
+interface RequestContent {
+  content: string;
+  headers: HttpHeaders;
+}
+
 
 @Entry
 @Component
@@ -21,12 +39,13 @@ struct Index {
     //实时上报定位
     interval:0,
   };
+
   //定时器中请求单次位置信息参数
   timer_request: geoLocationManager.LocationRequest = {
-  priority: geoLocationManager.LocationRequestPriority.FIRST_FIX, //快速定位
-  maxAccuracy: 50,
-  scenario: geoLocationManager.LocationRequestScenario.NAVIGATION  // 使用高精度模式
-};
+    priority: geoLocationManager.LocationRequestPriority.FIRST_FIX, //快速定位
+    maxAccuracy: 50,
+    scenario: geoLocationManager.LocationRequestScenario.NAVIGATION  // 使用高精度模式
+  };
 
   build() {
     Column() {
@@ -86,7 +105,8 @@ struct Index {
       'ohos.permission.READ_HEALTH_DATA' as Permissions,
       'ohos.permission.LOCATION' as Permissions,
       'ohos.permission.APPROXIMATELY_LOCATION' as Permissions,
-      'ohos.permission.ACCELEROMETER' as Permissions
+      'ohos.permission.ACCELEROMETER' as Permissions,
+      'ohos.permission.INTERNET' as Permissions
     ];
 
     atManager.requestPermissionsFromUser(
@@ -111,17 +131,69 @@ struct Index {
         // 判断是否全部授权
         const allGranted = data.authResults.every(result => result === 0);
         if (allGranted) {
-          console.info('所有权限已授权，开始心率与定位功能');
+          console.info('所有权限已授权,开始监测');
           this.startHeartRateSensor(); // 心率订阅函数
-          // this.startLocationService(); // 定位
+          this.startLocationService(); // 定位
           this.startAccelerometer();//加速度传感器
-          this.startGpsTimer(300);
+          // this.startGpsTimer(300);//通过定时器定位
+          this.uploadData();//上传数据
         } else {
           console.warn('部分权限未授权，功能可能受限');
         }
       }
     );
   }
+
+  async uploadData() {
+    // 3. 创建 HTTP 请求
+    const httpRequest = http.createHttp();
+    // 4. 准备请求数据
+    const url = "http://124.222.53.152:8080/api/data"; // 确保路径正确
+    // const url = "http://192.168.1.103:8080/api/data"; //lab_device 局域网测试用
+    const data: TestData = {
+      key1: "value1",
+      key2: "value2"
+    };
+
+    const headers: HttpHeaders = {
+      "Content-Type": "application/json"
+    };
+
+    try {
+      // 5. 发送 POST 请求
+      const response = await httpRequest.request(
+        url,
+        {
+          method: http.RequestMethod.POST,
+          header: headers,
+          extraData: JSON.stringify(data)
+        }
+      );
+      // 6. 处理响应
+      if (response.responseCode === http.ResponseCode.OK) {
+        console.info('请求成功:', JSON.stringify(response.result));
+        try {
+          let responseData:string = JSON.parse(String(response.result));
+          console.info('服务器返回数据:', responseData);
+        } catch (parseError) {
+          console.error('JSON解析错误:', parseError);
+        }
+      } else {
+        console.error(`请求失败，状态码: ${response.responseCode}`);
+        console.error('响应内容:', response.result);
+      }
+    } catch (error) {
+      // 7. 错误处理
+      console.error('请求发生错误:', JSON.stringify(error));
+      if (error) {
+        console.error(`业务错误代码: ${error.code}, 信息: ${error.message}`);
+      }
+    } finally {
+      // 8. 销毁请求对象
+      httpRequest.destroy();
+    }
+  }
+
   async startAccelerometer() {
     // 使用try catch对可能出现的异常进行捕获
     try {
@@ -157,7 +229,7 @@ struct Index {
     gpsTimer = setInterval(async () => {
       try {
         const location = await geoLocationManager.getCurrentLocation(this.timer_request);
-        console.info(`经度：${location.longitude}, 纬度：${location.latitude}`);
+        // console.info(`经度：${location.longitude}, 纬度：${location.latitude}`);
         this.location[0] = location.longitude;
         this.location[1] = location.latitude;
       } catch (err) {
@@ -191,7 +263,6 @@ struct Index {
       geoLocationManager.off('locationChange');
       console.log('定位服务关闭');
     } catch (err) {
-      let e = err as BusinessError;
       console.error("errCode:" + JSON.stringify(err));
     }
     this.keepScreenOn(false);
