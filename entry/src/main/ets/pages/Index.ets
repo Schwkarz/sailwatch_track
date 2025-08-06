@@ -24,6 +24,13 @@ interface RequestContent {
   headers: HttpHeaders;
 }
 
+interface UploadData {
+  heartRate: number;
+  location: number[];    // [经度, 纬度]
+  sensorData: number[];  // [x, y, z] 加速度
+  timestamp: number;     // 添加时间戳
+}
+
 
 @Entry
 @Component
@@ -31,6 +38,9 @@ struct Index {
   @State heartRate: number = 0;
   @State location: Array<number> = [0,0]; //[0]经度 [1]纬度
   @State sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
+  //上传数据的定时器变量
+  @State uploadTimer: number | undefined = undefined;
+  @State uploadInterval: number = 5000; // 默认5秒上传一次
 
   //请求位置信息的参数
   request: geoLocationManager.ContinuousLocationRequest= {
@@ -136,7 +146,8 @@ struct Index {
           this.startLocationService(); // 定位
           this.startAccelerometer();//加速度传感器
           // this.startGpsTimer(300);//通过定时器定位
-          this.uploadData();//上传数据
+          // this.uploadData_test();//上传数据（测试用）
+          this.startUploadTimer(this.uploadInterval);//定时上传数据
         } else {
           console.warn('部分权限未授权，功能可能受限');
         }
@@ -145,22 +156,21 @@ struct Index {
   }
 
   async uploadData() {
-    // 3. 创建 HTTP 请求
     const httpRequest = http.createHttp();
-    // 4. 准备请求数据
-    const url = "http://124.222.53.152:8080/api/data"; // 确保路径正确
-    // const url = "http://192.168.1.103:8080/api/data"; //lab_device 局域网测试用
-    const data: TestData = {
-      key1: "value1",
-      key2: "value2"
+    const url = "http://124.222.53.152:8080/api/data";
+    //需要上传的数据
+    const data : UploadData = {
+      heartRate: this.heartRate,
+      location: [... this.location], // ...为扩展运算符，用于对数组或对象的浅拷贝
+      sensorData: [...this.sensor_data.slice(0,3)],
+      timestamp: new Date().getTime() //获取当前时间（ms级）
+    }
+
+    const headers : HttpHeaders = {
+      "Content-Type" : "application/json"
     };
 
-    const headers: HttpHeaders = {
-      "Content-Type": "application/json"
-    };
-
-    try {
-      // 5. 发送 POST 请求
+    try{
       const response = await httpRequest.request(
         url,
         {
@@ -169,30 +179,85 @@ struct Index {
           extraData: JSON.stringify(data)
         }
       );
-      // 6. 处理响应
-      if (response.responseCode === http.ResponseCode.OK) {
-        console.info('请求成功:', JSON.stringify(response.result));
-        try {
-          let responseData:string = JSON.parse(String(response.result));
-          console.info('服务器返回数据:', responseData);
-        } catch (parseError) {
-          console.error('JSON解析错误:', parseError);
-        }
+      if(response.responseCode === http.ResponseCode.OK) {
+        console.info('上传成功', JSON.stringify(data));
       } else {
-        console.error(`请求失败，状态码: ${response.responseCode}`);
-        console.error('响应内容:', response.result);
+        console.error(`上传失败，状态码：${response.responseCode}`);
       }
-    } catch (error) {
-      // 7. 错误处理
-      console.error('请求发生错误:', JSON.stringify(error));
-      if (error) {
-        console.error(`业务错误代码: ${error.code}, 信息: ${error.message}`);
-      }
+    } catch(error) {
+      console.error('上传失败：', JSON.stringify(error));
     } finally {
-      // 8. 销毁请求对象
       httpRequest.destroy();
     }
   }
+
+  //添加定时上传
+  startUploadTimer(intervalMs : number = 5000) {
+    this.stopUploadTimer();
+    this.uploadTimer = setInterval(() => {
+      this.uploadData();
+    }, intervalMs);
+    console.info(`启动定时上传，间隔: ${intervalMs}ms`);
+  }
+
+  stopUploadTimer() {
+    if (this.uploadTimer !== undefined) {
+      clearInterval(this.uploadTimer);
+      this.uploadTimer = undefined;
+      console.info('停止定时上传');
+    }
+  }
+
+  // //测试用上传函数，成功与服务器通信
+  // async uploadData_test() {
+  //   // 3. 创建 HTTP 请求
+  //   const httpRequest = http.createHttp();
+  //   // 4. 准备请求数据
+  //   const url = "http://124.222.53.152:8080/api/data"; // 确保路径正确
+  //   // const url = "http://192.168.1.103:8080/api/data"; //lab_device 局域网测试用
+  //   const data: TestData = {
+  //     key1: "value1",
+  //     key2: "value2"
+  //   };
+  //
+  //   const headers: HttpHeaders = {
+  //     "Content-Type": "application/json"
+  //   };
+  //
+  //   try {
+  //     // 5. 发送 POST 请求
+  //     const response = await httpRequest.request(
+  //       url,
+  //       {
+  //         method: http.RequestMethod.POST,
+  //         header: headers,
+  //         extraData: JSON.stringify(data)
+  //       }
+  //     );
+  //     // 6. 处理响应
+  //     if (response.responseCode === http.ResponseCode.OK) {
+  //       console.info('请求成功:', JSON.stringify(response.result));
+  //       try {
+  //         let responseData:string = JSON.parse(String(response.result));
+  //         console.info('服务器返回数据:', responseData);
+  //       } catch (parseError) {
+  //         console.error('JSON解析错误:', parseError);
+  //       }
+  //     } else {
+  //       console.error(`请求失败，状态码: ${response.responseCode}`);
+  //       console.error('响应内容:', response.result);
+  //     }
+  //   } catch (error) {
+  //     // 7. 错误处理
+  //     console.error('请求发生错误:', JSON.stringify(error));
+  //     if (error) {
+  //       console.error(`业务错误代码: ${error.code}, 信息: ${error.message}`);
+  //     }
+  //   } finally {
+  //     // 8. 销毁请求对象
+  //     httpRequest.destroy();
+  //   }
+  // }
 
   async startAccelerometer() {
     // 使用try catch对可能出现的异常进行捕获
@@ -204,7 +269,7 @@ struct Index {
         this.sensor_data[0] = data.x;
         this.sensor_data[1] = data.y;
         this.sensor_data[2] = data.z;
-      }, { interval: 300000000 });//300ms
+      }, { interval: 100000000 });//100ms
     } catch (error) {
       let e: BusinessError = error as BusinessError;
       console.error(`Failed to invoke on. Code: ${e.code}, message: ${e.message}`);
@@ -214,7 +279,7 @@ struct Index {
   async startLocationService() {
     try{
       geoLocationManager.on('locationChange',this.request, (location: geoLocationManager.Location) => {
-        console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude)
+        // console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude)
         this.location[0] = location.longitude;
         this.location[1] = location.latitude;
       })
@@ -268,5 +333,4 @@ struct Index {
     this.keepScreenOn(false);
     this.stopGpsTimer();
   }
-
 }
