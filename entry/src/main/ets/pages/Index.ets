@@ -3,8 +3,14 @@ import { sensor } from '@kit.SensorServiceKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import window from '@ohos.window';
 import { geoLocationManager } from '@kit.LocationKit';
-import { rcp } from '@kit.RemoteCommunicationKit';
 import http from '@ohos.net.http';
+
+//测试延时用
+let now_time: number = 0;
+let last_time: number = 0;
+
+//上传数据包校验位
+let check: number = 0;
 
 //gps定时器
 let gpsTimer: number | undefined = undefined;
@@ -31,6 +37,37 @@ interface UploadData {
   timestamp: number;     // 添加时间戳
 }
 
+// 上传数据格式（带校验）
+interface UploadData_check {
+  uploaddata: UploadData;
+  check: number;
+}
+
+// 服务器发回数据格式
+interface ServerResponse {
+  status: string;
+  message: string;
+  received_data: UploadData;
+}
+
+function uploadDataToString(data: UploadData): string {
+  // 按固定顺序拼接所有字段
+  return [
+    data.heartRate.toString(),
+    data.location.join(','),
+    data.sensorData.join(','),
+    data.timestamp.toString()
+  ].join('|'); // 使用|分隔不同字段
+}
+
+// 异或校验
+function xorChecksum(str: string): number {
+  let checksum = 0;
+  for (let i = 0; i < str.length; i++) {
+    checksum ^= str.charCodeAt(i);
+  }
+  return checksum & 0xFF; // 返回单字节校验值 (0-255)
+}
 
 @Entry
 @Component
@@ -40,7 +77,7 @@ struct Index {
   @State sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
   //上传数据的定时器变量
   @State uploadTimer: number | undefined = undefined;
-  @State uploadInterval: number = 5000; // 默认5秒上传一次
+  @State uploadInterval: number = 100; // 0.1秒上传一次
 
   //请求位置信息的参数
   request: geoLocationManager.ContinuousLocationRequest= {
@@ -155,15 +192,27 @@ struct Index {
     );
   }
 
+
+
   async uploadData() {
+    // 每一个httpRequest对应一个HTTP请求任务，不可复用。
     const httpRequest = http.createHttp();
     const url = "http://124.222.53.152:8080/api/data";
     //需要上传的数据
-    const data : UploadData = {
+    const sensor_data : UploadData = {
       heartRate: this.heartRate,
       location: [... this.location], // ...为扩展运算符，用于对数组或对象的浅拷贝
       sensorData: [...this.sensor_data.slice(0,3)],
       timestamp: new Date().getTime() //获取当前时间（ms级）
+    }
+
+    //将sensor_data转成字符串后，再进行异或校验
+    const dataString : string = uploadDataToString(sensor_data);
+    check = xorChecksum(dataString);
+
+    const data : UploadData_check = {
+      uploaddata: sensor_data,
+      check: check
     }
 
     const headers : HttpHeaders = {
@@ -171,16 +220,31 @@ struct Index {
     };
 
     try{
+      check += 1; //递增校验
       const response = await httpRequest.request(
         url,
         {
           method: http.RequestMethod.POST,
           header: headers,
-          extraData: JSON.stringify(data)
+          // 当使用POST请求时此字段用于传递请求体内容，具体格式与服务器端一致。
+          extraData: JSON.stringify(data),
+          connectTimeout: 10000, // 可选，默认为60000ms。
+          readTimeout: 10000, // 可选，默认为60000ms。
         }
       );
+
+      //处理响应
       if(response.responseCode === http.ResponseCode.OK) {
-        console.info('上传成功', JSON.stringify(data));
+        // console.info('上传成功', JSON.stringify(data))
+        try{
+          //接收服务器发回的数据
+          const serverResponse: ServerResponse = JSON.parse(String(response.result));
+          now_time = new Date().getTime();
+          console.info('上传+下载延时', now_time - serverResponse.received_data.timestamp); //ms延迟
+          // console.info('上传成功，服务器响应：', serverResponse);
+        } catch (parseError) {
+          console.error('服务器响应解析失败:', parseError);
+        }
       } else {
         console.error(`上传失败，状态码：${response.responseCode}`);
       }
@@ -269,7 +333,10 @@ struct Index {
         this.sensor_data[0] = data.x;
         this.sensor_data[1] = data.y;
         this.sensor_data[2] = data.z;
-      }, { interval: 100000000 });//100ms
+        last_time = now_time;
+        now_time = new Date().getTime();
+        // console.info('读取用时：' , now_time - last_time);
+      }, { interval: 50000000 });//50ms
     } catch (error) {
       let e: BusinessError = error as BusinessError;
       console.error(`Failed to invoke on. Code: ${e.code}, message: ${e.message}`);
