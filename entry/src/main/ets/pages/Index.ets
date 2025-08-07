@@ -79,6 +79,9 @@ struct Index {
   @State uploadTimer: number | undefined = undefined;
   @State uploadInterval: number = 100; // 0.1秒上传一次
 
+  @State sensorInterval: number = 100000000; //加速度传感器读取间隔
+  @State heartInterval: number = 100000000; //心率读取间隔
+
   //请求位置信息的参数
   request: geoLocationManager.ContinuousLocationRequest= {
     //高功耗定位
@@ -336,7 +339,7 @@ struct Index {
         last_time = now_time;
         now_time = new Date().getTime();
         // console.info('读取用时：' , now_time - last_time);
-      }, { interval: 50000000 });//50ms
+      }, { interval: this.sensorInterval });//200ms
     } catch (error) {
       let e: BusinessError = error as BusinessError;
       console.error(`Failed to invoke on. Code: ${e.code}, message: ${e.message}`);
@@ -381,7 +384,7 @@ struct Index {
       sensor.on(sensor.SensorId.HEART_RATE, (data: sensor.HeartRateResponse) => {
         this.heartRate = data.heartRate;
         // console.log(`心率:${this.heartRate}`);
-      }, { interval: 2000000000 }); // 每2000ms更新一次
+      }, { interval: this.heartInterval }); // 每1000ms更新一次
     } catch (err) {
       let e = err as BusinessError;
       console.error(`心率订阅失败，错误码: ${e.code}, 信息: ${e.message}`);

@@ -1,0 +1,59 @@
+import json
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import numpy as np
+
+# 设置中文字体
+mpl.rcParams['font.sans-serif'] = ['SimHei']  # 使用黑体
+mpl.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+# 然后在绘制图表前设置字体
+plt.rcParams['font.family'] = 'SimHei'
+
+def analyze_time_differences(json_file):
+    # 读取JSON文件
+    with open(json_file, 'r') as f:
+        data = json.load(f)
+    
+    # 提取所有时间差数据
+    time_diffs = [entry['time_diff'] for entry in data if 'time_diff' in entry]
+    
+    if not time_diffs:
+        print("文件中没有找到时间差数据")
+        return
+    
+    # 计算统计信息
+    average = np.mean(time_diffs)
+    minimum = min(time_diffs)
+    maximum = max(time_diffs)
+    
+    print(f"延时统计信息：")
+    print(f"数据点数量: {len(time_diffs)}")
+    print(f"平均值: {average:.2f}")
+    print(f"最小值: {minimum}")
+    print(f"最大值: {maximum}")
+    
+    # 绘制折线图
+    plt.figure(figsize=(10, 6))
+    plt.plot(time_diffs, marker='o', linestyle='-', color='b', label='时间差')
+    
+    # 添加平均线
+    plt.axhline(y=average, color='r', linestyle='--', label=f'平均值 ({average:.2f})')
+    
+    # 设置图表标题和标签
+    plt.title('延时变化趋势', fontsize=14)
+    plt.xlabel('数据点序号', fontsize=12)
+    plt.ylabel('延时', fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    
+    # 显示图表
+    plt.tight_layout()
+    plt.savefig('lag_test_3.png')
+    # plt.show()
+
+# 使用示例
+if __name__ == "__main__":
+    json_file = "lag_test_3.json"  # 替换为您的JSON文件路径
+    analyze_time_differences(json_file)
+    
