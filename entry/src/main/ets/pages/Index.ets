@@ -77,10 +77,10 @@ struct Index {
   @State sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
   //上传数据的定时器变量
   @State uploadTimer: number | undefined = undefined;
-  @State uploadInterval: number = 100; // 0.1秒上传一次
+  @State uploadInterval: number = 50; // 50ms上传一次
 
-  @State sensorInterval: number = 100000000; //加速度传感器读取间隔
-  @State heartInterval: number = 100000000; //心率读取间隔
+  @State sensorInterval: number = 15000000; //加速度传感器读取间隔 ns
+  @State heartInterval: number = 100000000; //心率读取间隔 ns
 
   //请求位置信息的参数
   request: geoLocationManager.ContinuousLocationRequest= {
@@ -243,7 +243,7 @@ struct Index {
           //接收服务器发回的数据
           const serverResponse: ServerResponse = JSON.parse(String(response.result));
           now_time = new Date().getTime();
-          console.info('上传+下载延时', now_time - serverResponse.received_data.timestamp); //ms延迟
+          // console.info('上传+下载延时', now_time - serverResponse.received_data.timestamp); //ms延迟
           // console.info('上传成功，服务器响应：', serverResponse);
         } catch (parseError) {
           console.error('服务器响应解析失败:', parseError);
@@ -338,8 +338,11 @@ struct Index {
         this.sensor_data[2] = data.z;
         last_time = now_time;
         now_time = new Date().getTime();
-        // console.info('读取用时：' , now_time - last_time);
-      }, { interval: this.sensorInterval });//200ms
+        let time_diff : number = now_time - last_time;
+        if(last_time != 0){
+          console.info('两次读取加速度传感器间隔：' , now_time - last_time);
+        }
+      }, { interval: this.sensorInterval });
     } catch (error) {
       let e: BusinessError = error as BusinessError;
       console.error(`Failed to invoke on. Code: ${e.code}, message: ${e.message}`);
