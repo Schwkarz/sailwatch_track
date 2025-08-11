@@ -8,12 +8,14 @@ import http from '@ohos.net.http';
 //测试延时用
 let now_time: number = 0;
 let last_time: number = 0;
+let dur_time: number = 0;
 
 //上传数据包校验位
 let check: number = 0;
 
 //gps定时器
 let gpsTimer: number | undefined = undefined;
+
 
 // 1. 定义必要的接口
 interface TestData {
@@ -33,8 +35,10 @@ interface RequestContent {
 interface UploadData {
   heartRate: number;
   location: number[];    // [经度, 纬度]
+  speed: number;
   sensorData: number[];  // [x, y, z] 加速度
   timestamp: number;     // 添加时间戳
+  lag_time;
 }
 
 // 上传数据格式（带校验）
@@ -50,15 +54,61 @@ interface ServerResponse {
   received_data: UploadData;
 }
 
+// 上传接口
+interface IUploadResult {
+  success: boolean;
+  error?: string;  // 可选字段
+}
+
+// 数据容量测试结果类型
+interface ITestResult {
+  success: boolean;
+  sizeKB: number;
+  duration?: number;    // 成功时存在
+  error?: string;          // 失败时存在
+}
+
+// 数据容量HTTP请求配置类型
+interface IHttpRequestConfig {
+  method: string;
+  body: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+}
+
+interface uploadCap {
+  payload: string;
+  timestamp: number;
+}
+
+
+
+
+
+
+
+
 function uploadDataToString(data: UploadData): string {
   // 按固定顺序拼接所有字段
   return [
     data.heartRate.toString(),
     data.location.join(','),
+    data.speed.toString(),
     data.sensorData.join(','),
-    data.timestamp.toString()
-  ].join('|'); // 使用|分隔不同字段
+    data.timestamp.toString(),
+    // data.lag_time.toString() // 新增字段
+  ].join('|'); // 使用 | 分隔不同字段
 }
+
+// function uploadDataToString(data: UploadData): string {
+//   // 按固定顺序拼接所有字段
+//   return [
+//     data.heartRate.toString(),
+//     data.location.join(','),
+//     data.sensorData.join(','),
+//     data.timestamp.toString()
+//   ].join('|'); // 使用|分隔不同字段
+// }
 
 // 异或校验
 function xorChecksum(str: string): number {
@@ -69,18 +119,29 @@ function xorChecksum(str: string): number {
   return checksum & 0xFF; // 返回单字节校验值 (0-255)
 }
 
+// 数据生成工具（手表端）
+function generateTestData(sizeKB: number): string {
+  const char = 'A';
+  return char.repeat(sizeKB * 1024); // 生成指定大小的字符串
+}
+
 @Entry
 @Component
 struct Index {
   @State heartRate: number = 0;
   @State location: Array<number> = [0,0]; //[0]经度 [1]纬度
   @State sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
+  @State speed: number = 0;
   //上传数据的定时器变量
   @State uploadTimer: number | undefined = undefined;
-  @State uploadInterval: number = 50; // 50ms上传一次
+  @State uploadInterval: number = 100; // 50ms上传一次
 
-  @State sensorInterval: number = 15000000; //加速度传感器读取间隔 ns
+  @State sensorInterval: number = 50000000; //加速度传感器读取间隔 ns
   @State heartInterval: number = 100000000; //心率读取间隔 ns
+
+  //显示网络连接状态
+  @State isConnected: boolean = false;
+  @State connectionStatusColor: Color = Color.Red;
 
   //请求位置信息的参数
   request: geoLocationManager.ContinuousLocationRequest= {
@@ -99,6 +160,19 @@ struct Index {
 
   build() {
     Column() {
+      Row() {
+        Text(`服务器连接状态：`)
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+        Circle()
+          .width(8)
+          .height(8)
+          .fill(this.connectionStatusColor)
+          .margin({ left: 3 })
+      }
+      .justifyContent(FlexAlign.Center)
+      .margin({ bottom: 10 })
+
       Text(`水上运动监测`)
         .fontSize(23)
         .fontWeight(FontWeight.Medium)
@@ -132,7 +206,7 @@ struct Index {
   }
 
   aboutToAppear() {
-    this.requestHeartRatePermissionAndStart();
+    this.requestPermissionAndStart();
     this.keepScreenOn(true);
   }
 
@@ -147,7 +221,7 @@ struct Index {
   }
 
   //权限获取
-  async requestHeartRatePermissionAndStart() {
+  async requestPermissionAndStart() {
     const atManager = abilityAccessCtrl.createAtManager();
     const context = getContext(this) as common.UIAbilityContext;
 
@@ -188,6 +262,7 @@ struct Index {
           // this.startGpsTimer(300);//通过定时器定位
           // this.uploadData_test();//上传数据（测试用）
           this.startUploadTimer(this.uploadInterval);//定时上传数据
+          // this.runCapacityTests();//上传数据容量测试
         } else {
           console.warn('部分权限未授权，功能可能受限');
         }
@@ -195,68 +270,171 @@ struct Index {
     );
   }
 
-
-
-  async uploadData() {
-    // 每一个httpRequest对应一个HTTP请求任务，不可复用。
-    const httpRequest = http.createHttp();
-    const url = "http://124.222.53.152:8080/api/data";
-    //需要上传的数据
-    const sensor_data : UploadData = {
-      heartRate: this.heartRate,
-      location: [... this.location], // ...为扩展运算符，用于对数组或对象的浅拷贝
-      sensorData: [...this.sensor_data.slice(0,3)],
-      timestamp: new Date().getTime() //获取当前时间（ms级）
-    }
-
-    //将sensor_data转成字符串后，再进行异或校验
-    const dataString : string = uploadDataToString(sensor_data);
-    check = xorChecksum(dataString);
-
-    const data : UploadData_check = {
-      uploaddata: sensor_data,
-      check: check
-    }
-
-    const headers : HttpHeaders = {
-      "Content-Type" : "application/json"
-    };
-
-    try{
-      check += 1; //递增校验
+  // 网络状态检测
+  async checkNetwork(): Promise<boolean> {
+    try {
+      const httpRequest = http.createHttp();
       const response = await httpRequest.request(
-        url,
-        {
-          method: http.RequestMethod.POST,
-          header: headers,
-          // 当使用POST请求时此字段用于传递请求体内容，具体格式与服务器端一致。
-          extraData: JSON.stringify(data),
-          connectTimeout: 10000, // 可选，默认为60000ms。
-          readTimeout: 10000, // 可选，默认为60000ms。
+        "http://124.222.53.152:8080/api.data",
+        { method: http.RequestMethod.POST,
+          connectTimeout: 3000,
+          header: { "Content-Type": "application/json" },
         }
       );
+      this.isConnected = response.responseCode === http.ResponseCode.OK;
+      this.connectionStatusColor = this.isConnected ? Color.Green : Color.Red;
+      return this.isConnected;
+    } catch (error) {
+      this.isConnected = false;
+      this.connectionStatusColor = Color.Red;
+      return false;
+    }
+  }
 
-      //处理响应
-      if(response.responseCode === http.ResponseCode.OK) {
-        // console.info('上传成功', JSON.stringify(data))
-        try{
-          //接收服务器发回的数据
-          const serverResponse: ServerResponse = JSON.parse(String(response.result));
-          now_time = new Date().getTime();
-          // console.info('上传+下载延时', now_time - serverResponse.received_data.timestamp); //ms延迟
-          // console.info('上传成功，服务器响应：', serverResponse);
-        } catch (parseError) {
-          console.error('服务器响应解析失败:', parseError);
+  private async tryUpload(httpRequest: http.HttpRequest): Promise<IUploadResult> {
+    const sensor_data: UploadData = {
+      heartRate: this.heartRate,
+      location: [...this.location],
+      speed: this.speed,
+      sensorData: [...this.sensor_data.slice(0,3)],
+      timestamp: Date.now(),
+      lag_time: dur_time
+    };
+
+    // console.log(uploadDataToString(sensor_data))
+
+    const data: UploadData_check = {
+      uploaddata: sensor_data,
+      check: xorChecksum(uploadDataToString(sensor_data))
+    };
+
+    try {
+      const response = await httpRequest.request(
+        "http://124.222.53.152:8080/api/data",
+        {
+          method: http.RequestMethod.POST,
+          header: { "Content-Type": "application/json" },
+          extraData: JSON.stringify(data),
+          connectTimeout: 8000,  // 适当缩短超时时间
+          readTimeout: 8000
         }
-      } else {
-        console.error(`上传失败，状态码：${response.responseCode}`);
+      );
+      let serverResponse: ServerResponse = JSON.parse(String(response.result));
+      now_time = new Date().getTime();
+      dur_time = now_time - serverResponse.received_data.timestamp;
+      // const result: string = `${now_time},${serverResponse.received_data.timestamp},${dur_time}`;
+      // console.log(result);
+
+      return { success: response.responseCode === http.ResponseCode.OK };
+    } catch (error) {
+      console.error(`上传尝试失败: ${JSON.stringify(error)}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  //优化后上传方案
+  async uploadData() {
+    // 先检查网络连接
+    // if (!await this.checkNetwork()) {
+    //   console.warn('网络不可用，跳过上传');
+    //   return;
+    // }
+
+    const httpRequest = http.createHttp();
+    try {
+      // 重试机制（最多3次）
+      let retryCount = 0;
+      while (retryCount < 3) {
+        const result = await this.tryUpload(httpRequest);
+        if (result.success) {
+          this.isConnected = true;
+          this.connectionStatusColor = Color.Green;
+          return;
+        }
+        retryCount++;
+        // 明确指定Promise的泛型参数为void
+        await new Promise<void>(resolve => setTimeout(resolve, 1000 * retryCount)); // 指数退避
       }
-    } catch(error) {
-      console.error('上传失败：', JSON.stringify(error));
+      this.isConnected = false;
+      this.connectionStatusColor = Color.Red;
     } finally {
       httpRequest.destroy();
     }
   }
+
+
+  // 优化前上传方案
+  // async uploadData() {
+  //
+  //
+  //   // 每一个httpRequest对应一个HTTP请求任务，不可复用。
+  //   const httpRequest = http.createHttp();
+  //       const url = "http://124.222.53.152:8080/api/data";
+  //   //需要上传的数据
+  //   const sensor_data : UploadData = {
+  //     heartRate: this.heartRate,
+  //     location: [... this.location], // ...为扩展运算符，用于对数组或对象的浅拷贝
+  //     sensorData: [...this.sensor_data.slice(0,3)],
+  //     timestamp: new Date().getTime() //获取当前时间（ms级）
+  //   }
+  //
+  //   //将sensor_data转成字符串后，再进行异或校验
+  //   const dataString : string = uploadDataToString(sensor_data);
+  //   check = xorChecksum(dataString);
+  //
+  //   const data : UploadData_check = {
+  //     uploaddata: sensor_data,
+  //     check: check
+  //   }
+  //
+  //   const headers : HttpHeaders = {
+  //     "Content-Type" : "application/json"
+  //   };
+  //
+  //   try{
+  //     check += 1; //递增校验
+  //     const response = await httpRequest.request(
+  //       url,
+  //       {
+  //         method: http.RequestMethod.POST,
+  //         header: headers,
+  //         // 当使用POST请求时此字段用于传递请求体内容，具体格式与服务器端一致。
+  //         extraData: JSON.stringify(data),
+  //         connectTimeout: 10000, // 可选，默认为60000ms。
+  //         readTimeout: 10000, // 可选，默认为60000ms。
+  //       }
+  //     );
+  //
+  //     //处理响应
+  //     if(response.responseCode === http.ResponseCode.OK) {
+  //       this.isConnected = true;
+  //       this.connectionStatusColor = Color.Green;
+  //       // console.info('上传成功', JSON.stringify(data))
+  //       try{
+  //         //接收服务器发回的数据
+  //         const serverResponse: ServerResponse = JSON.parse(String(response.result));
+  //         now_time = new Date().getTime();
+  //         // console.info('上传+下载延时', now_time - serverResponse.received_data.timestamp); //ms延迟
+  //         // console.info('上传成功，服务器响应：', serverResponse);
+  //       } catch (parseError) {
+  //         console.error('服务器响应解析失败:', parseError);
+  //       }
+  //     } else {
+  //       this.isConnected = false;
+  //       this.connectionStatusColor = Color.Red;
+  //       console.error(`上传失败，状态码：${response.responseCode}`);
+  //     }
+  //   } catch(error) {
+  //     this.isConnected = false;
+  //     this.connectionStatusColor = Color.Red;
+  //     console.error('上传失败：', JSON.stringify(error));
+  //   } finally {
+  //     httpRequest.destroy();
+  //   }
+  // }
 
   //添加定时上传
   startUploadTimer(intervalMs : number = 5000) {
@@ -336,12 +514,12 @@ struct Index {
         this.sensor_data[0] = data.x;
         this.sensor_data[1] = data.y;
         this.sensor_data[2] = data.z;
-        last_time = now_time;
-        now_time = new Date().getTime();
-        let time_diff : number = now_time - last_time;
-        if(last_time != 0){
-          console.info('两次读取加速度传感器间隔：' , now_time - last_time);
-        }
+        // last_time = now_time;
+        // now_time = new Date().getTime();
+        // let time_diff : number = now_time - last_time;
+        // if(last_time != 0){
+        //   // console.info('两次读取加速度传感器间隔：' , now_time - last_time);
+        // }
       }, { interval: this.sensorInterval });
     } catch (error) {
       let e: BusinessError = error as BusinessError;
@@ -355,6 +533,7 @@ struct Index {
         // console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude)
         this.location[0] = location.longitude;
         this.location[1] = location.latitude;
+        this.speed = location.speed;
       })
     }
     catch(error){
@@ -391,6 +570,72 @@ struct Index {
     } catch (err) {
       let e = err as BusinessError;
       console.error(`心率订阅失败，错误码: ${e.code}, 信息: ${e.message}`);
+    }
+  }
+
+  // 测试上传方法
+  async testUploadCap(sizeKB: number): Promise<ITestResult> {
+    const testData: uploadCap = {
+      payload: generateTestData(sizeKB),
+      timestamp: Date.now()
+    };
+
+    try {
+      const testUploadCapRequest = http.createHttp();
+      const start = Date.now();
+      const response = await testUploadCapRequest.request(
+        "http://124.222.53.152:8080/api/upload",
+        {
+          method: http.RequestMethod.POST,
+          connectTimeout: 3000,
+          header: {"Content-Type" : "application.json"},
+          extraData: testData.payload
+        }
+      );
+      const duration = Date.now() - start;
+      // console.info(`上传用时: ${duration}`)
+
+
+      return {
+        success: true,
+        sizeKB,
+        duration
+      } as ITestResult;
+
+    } catch (error) {
+      return {
+        success: false,
+        sizeKB,
+        error
+      } as ITestResult;
+    }
+  }
+
+  async runCapacityTests() {
+    const testSizes = [1, 10, 100, 1024, 5120, 10240, 51200]; // KB单位: 1KB,10KB,100KB,1MB,5MB,10MB,50MB
+
+    for (const sizeKB of testSizes) {
+      try {
+        console.log(`开始测试 ${sizeKB}KB 数据上传...`);
+        const result = await this.testUploadCap(sizeKB);
+
+        console.log(
+          `测试结果: ${sizeKB}KB | ` +
+            `状态: ${result.success ? '成功' : '失败'} | ` +
+            `耗时: ${result.duration || 0}ms`
+        );
+
+        // 失败时停止后续更大容量测试
+        if (!result.success) break;
+
+      } catch (error) {
+        console.error(`${sizeKB}KB 测试异常:`, error);
+        break;
+      }
+
+      // 间隔2秒避免服务器过载
+      await new Promise<void>(resolve =>
+      setTimeout(resolve, 2000));
     }
   }
 
