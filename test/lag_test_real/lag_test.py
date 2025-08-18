@@ -25,6 +25,11 @@ def analyze_time_differences(json_file):
                 time_diffs.append(lag_time)
             else:
                 print(f"发现异常值已过滤: {lag_time}")
+        if 'speed' in entry:
+            speed = entry['speed']
+            # 定义正常范围（可根据实际情况调整）
+            if 0 < speed:
+                print(f"速度: {speed}")
     
     if not time_diffs:
         print("文件中没有有效的时间差数据")
@@ -59,11 +64,11 @@ def analyze_time_differences(json_file):
     
     # 显示图表
     plt.tight_layout()
-    plt.savefig('lag_test_2.png')
+    plt.savefig('lag_test_1.png')
     # plt.show()
 
 # 使用示例
 if __name__ == "__main__":
-    json_file = "sensor_data_2.json"  # 替换为您的JSON文件路径
+    json_file = "sensor_data_1.json"  # 替换为您的JSON文件路径
     analyze_time_differences(json_file)
     
