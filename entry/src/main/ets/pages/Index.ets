@@ -6,7 +6,7 @@ import { geoLocationManager } from '@kit.LocationKit';
 import http from '@ohos.net.http';
 import Queue from '@ohos.util.Queue';
 import { ble } from '@kit.ConnectivityKit';
-import {bleManagement} from '../utils/bluetoothManage'
+import {BleManagement} from '../utils/bluetoothManage'
 
 
 //测试延时用
@@ -92,7 +92,7 @@ class DataUploader {
   }
 
   // 上传控制逻辑
-  private async tryStartUpload(): Promise<void> {
+  public async tryStartUpload(): Promise<void> {
     // 避免重复上传
     if (this.isUploading) return;
 
@@ -308,7 +308,7 @@ struct Index {
   dataUploader: DataUploader = new DataUploader();
   @State dataQueueLength : number = 0;
 
-  wtBLE: bleManagement = new bleManagement();
+  wtBLE: BleManagement = new BleManagement();
 
   //缓存文件用
   //获取应用沙箱路径
@@ -598,6 +598,7 @@ struct Index {
       if(success == true){
         this.isConnected = true;
         this.connectionStatusColor = Color.Green;
+        this.dataUploader.tryStartUpload();
       }
       else {
         this.isConnected = false;
