@@ -7,7 +7,9 @@ import http from '@ohos.net.http';
 import Queue from '@ohos.util.Queue';
 import { ble } from '@kit.ConnectivityKit';
 import {BleManagement} from '../utils/bluetoothManage'
+import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data} from '../utils/mqtt'
 
+const tenantCode: number = 1188;
 
 //测试延时用
 let now_time: number = 0;
@@ -15,7 +17,6 @@ let dur_time: number = 0;
 
 //测试gps更新次数
 let location_change: number = 0;
-
 
 //gps定时器
 let gpsTimer: number | undefined = undefined;
@@ -60,6 +61,30 @@ class DataUploader {
     this.dataQueueLength = this.dataQueue.length;
     try {
       const httpRequest = http.createHttp();
+
+      let ble_Data: ble_SensorData = {
+        header : 99,
+        flag : 99,
+        acceleration : {
+          x : 99,
+          y : 99,
+          z : 99
+        },
+        angularVelocity : {
+          x : 99,
+          y : 99,
+          z : 99
+        },
+        angle : {
+          roll : 99,
+          pitch : 99,
+          yaw : 99
+        },
+        rawData : [],
+        timestamp : 99
+      }
+
+
       const data: UploadData = {
         heartRate: 99,
         location: [99,99,99],
@@ -67,7 +92,8 @@ class DataUploader {
         sensorData: [99,99,99],
         timestamp: 99,
         lag_time: 99,
-        gps_change: 99
+        gps_change: 99,
+        ble_SensorData: ble_Data
       }
       const data_check: UploadData_check = {
         uploaddata: data,
@@ -206,6 +232,7 @@ interface UploadData {
   timestamp: number;     // 添加时间戳
   lag_time;
   gps_change: number;
+  ble_SensorData: ble_SensorData;
 }
 
 // 上传数据格式（带校验）
@@ -248,10 +275,33 @@ interface uploadCap {
   timestamp: number;
 }
 
+interface acceleration {
+  x : number;
+  y : number;
+  z : number;
+}
 
+interface angularVelocity {
+  x : number;
+  y : number;
+  z : number;
+}
 
+interface angle {
+  roll : number;
+  pitch : number;
+  yaw : number;
+}
 
-
+interface ble_SensorData {
+  header: number;          // 数据包头 0x55
+  flag: number;            // 标志位 0x61
+  acceleration: acceleration;         // 加速度 (单位: m/s^2)
+  angularVelocity: angularVelocity;   // 角速度 (单位: °/s)
+  angle: angle;            // 角度 (单位: °)
+  rawData: number[];       // 原始数据数组
+  timestamp: number;       // 解析时间戳
+}
 
 
 
@@ -282,6 +332,13 @@ function generateTestData(sizeKB: number): string {
   return char.repeat(sizeKB * 1024); // 生成指定大小的字符串
 }
 
+// 生成12位随机数字
+function generateRandomNum(length: number = 12): string {
+  return new Array(length).fill(0).map(() => Math.floor(Math.random() * 10)).join('');
+}
+
+
+
 @Entry
 @Component
 struct Index {
@@ -308,7 +365,84 @@ struct Index {
   dataUploader: DataUploader = new DataUploader();
   @State dataQueueLength : number = 0;
 
-  wtBLE: BleManagement = new BleManagement();
+  wtBLE: BleManagement = new BleManagement(); // 用于连接并读取wt姿态传感器
+
+  mylevel: level_rec = {
+    success: false,
+    errCode: "null",
+    errMessage: "err",
+    data: [
+      {
+        levelId: "err",
+        levelName: "err"
+      }
+    ]
+  };
+
+  mygroup: group_rec = {
+    success: false,
+    errCode: "null",
+    errMessage: "err",
+    data: [
+      {
+        groupId: "err",
+        groupName: "err",
+        color: "err",
+        mhmId: "err",
+        mhmName: "err"
+      }
+    ]
+  };
+
+  myboat_data: sailboat_data = {
+    mHmName: "000",
+    color: "000",
+
+    longitude: "000",
+    latitude: "000",
+
+    headingT: 0,
+    headingM: 0,
+    sailStatus: null,
+    leeway: null,
+
+    speed: 0,
+    standardSpeed: null,
+    customStandardSpeed: null,
+
+    angle: null,
+    vmg: null,
+    standardVmg: null,
+
+    customAngle: null,
+    customVmg: null,
+    customStandardVmg: null,
+
+    windSourceBoatCode: "000",
+    windSpeed: 0,
+    windDirection: 0,
+    customWindSpeed: 0,
+    customWindDirection: 0,
+
+    yaw: 0,
+    rol: 0,
+    posture: null,
+
+    hr: [0,0]
+  }
+
+  myMqttUploadData: mqttUploadData = {
+    mHmId: "000",
+    ts: "000",
+    data: this.myboat_data
+  }
+
+  //mqtt发送管理器
+  mqttManager: MqttManagement = new MqttManagement(
+    '180.107.109.102',
+    1883,
+    false
+  );
 
   //缓存文件用
   //获取应用沙箱路径
@@ -481,6 +615,7 @@ struct Index {
           // this.runCapacityTests();//上传数据容量测试
           this.wtBLE.checkDevice();
 
+          this.connectWatchMqtt();
 
         } else {
           console.warn('部分权限未授权，功能可能受限');
@@ -512,6 +647,29 @@ struct Index {
   }
 
   private async tryUpload(httpRequest: http.HttpRequest): Promise<IUploadResult> {
+
+    let ble_Data: ble_SensorData = {
+      header : this.wtBLE.ble_sensorData.header,
+      flag : this.wtBLE.ble_sensorData.flag,
+      acceleration : {
+        x : this.wtBLE.ble_sensorData.acceleration.x,
+        y : this.wtBLE.ble_sensorData.acceleration.y,
+        z : this.wtBLE.ble_sensorData.acceleration.z
+      },
+      angularVelocity : {
+        x : this.wtBLE.ble_sensorData.angularVelocity.x,
+        y : this.wtBLE.ble_sensorData.angularVelocity.y,
+        z : this.wtBLE.ble_sensorData.angularVelocity.z
+      },
+      angle : {
+        roll : this.wtBLE.ble_sensorData.angle.roll,
+        pitch : this.wtBLE.ble_sensorData.angle.pitch,
+        yaw : this.wtBLE.ble_sensorData.angle.yaw
+      },
+      rawData : [],
+      timestamp : Date.now()
+    }
+
     const sensor_data: UploadData = {
       heartRate: this.heartRate,
       location: [...this.location],
@@ -519,7 +677,8 @@ struct Index {
       sensorData: [...this.sensor_data.slice(0,3)],
       timestamp: Date.now(),
       lag_time: dur_time,
-      gps_change: location_change
+      gps_change: location_change,
+      ble_SensorData: ble_Data
     };
 
     // console.log(uploadDataToString(sensor_data))
@@ -590,7 +749,39 @@ struct Index {
   //定时监测网络状态
   async startCheckTimer(intervalMs : number = 1000) {
 
+    // "longitude":"121.493807","latitude":"31.300226"
+
     let checkTimer = setInterval(async () => {
+
+      this.myMqttUploadData.mHmId = this.mygroup.data[0].mhmId;
+      this.myMqttUploadData.ts = formatDateTime(new Date());
+
+      this.myMqttUploadData.data.mHmName = this.mygroup.data[0].mhmName;
+      this.myMqttUploadData.data.color = this.mygroup.data[0].color;
+
+      this.myMqttUploadData.data.longitude = String(this.location[0].toFixed(6));
+      this.myMqttUploadData.data.latitude = String(this.location[1].toFixed(6));
+
+      this.myMqttUploadData.data.speed = this.speed;
+
+      this.myMqttUploadData.data.yaw = this.wtBLE.ble_sensorData.angle.yaw;
+      this.myMqttUploadData.data.rol = this.wtBLE.ble_sensorData.angle.roll;
+
+      this.myMqttUploadData.data.hr = [this.heartRate,-1];
+
+      // 发布航行数据消息
+      await this.mqttManager.publish(`mobile/up/general-train/${tenantCode}/1964940865353916418/${this.mygroup.data[0].mhmId}`, JSON.stringify(this.myMqttUploadData),1);
+
+      let gps_original_data: original_data = {
+        mHmId: this.myMqttUploadData.mHmId,
+        ts: this.myMqttUploadData.ts,
+        dataType: "gps",
+        data: `A,${this.myMqttUploadData.data.longitude},${this.myMqttUploadData.data.latitude},${this.speed.toFixed(4)},${this.myMqttUploadData.data.headingT},${this.myMqttUploadData.data.headingM}`
+      }
+      // 发布原始数据
+      // await this.mqttManager.publish(`mobile/up/orignal/${tenantCode}/${this.mylevel.data[0].levelId}/${this.mygroup.data[0].mhmId}`, JSON.stringify(gps_original_data),1);
+
+
       this.dataQueueLength = this.dataUploader.dataQueueLength;
 
       let success = await this.dataUploader.checkNetwork();
@@ -622,7 +813,33 @@ struct Index {
 
     this.stopUploadTimer();
 
+
+    console.log(`角度: roll: ${this.wtBLE.ble_sensorData.angle.roll},pitch: ${this.wtBLE.ble_sensorData.angle.pitch},yaw: ${this.wtBLE.ble_sensorData.angle.yaw}`);
+
     this.uploadTimer = setInterval(() => {
+
+      let ble_Data: ble_SensorData = {
+        header : this.wtBLE.ble_sensorData.header,
+        flag : this.wtBLE.ble_sensorData.flag,
+        acceleration : {
+          x : this.wtBLE.ble_sensorData.acceleration.x,
+          y : this.wtBLE.ble_sensorData.acceleration.y,
+          z : this.wtBLE.ble_sensorData.acceleration.z
+        },
+        angularVelocity : {
+          x : this.wtBLE.ble_sensorData.angularVelocity.x,
+          y : this.wtBLE.ble_sensorData.angularVelocity.y,
+          z : this.wtBLE.ble_sensorData.angularVelocity.z
+        },
+        angle : {
+          roll : this.wtBLE.ble_sensorData.angle.roll,
+          pitch : this.wtBLE.ble_sensorData.angle.pitch,
+          yaw : this.wtBLE.ble_sensorData.angle.yaw
+        },
+        rawData : [],
+        timestamp : Date.now()
+      }
+
       const sensor_data: UploadData = {
         heartRate: this.heartRate,
         location: [...this.location],
@@ -630,7 +847,8 @@ struct Index {
         sensorData: [...this.sensor_data.slice(0,3)],
         timestamp: Date.now(),
         lag_time: dur_time,
-        gps_change: location_change
+        gps_change: location_change,
+        ble_SensorData: ble_Data
       };
       // console.log(uploadDataToString(sensor_data))
 
@@ -804,6 +1022,30 @@ struct Index {
     }
   }
 
+  async connectWatchMqtt() {
+    //拿到level数据
+    this.mylevel = await get_level();
+    //拿到group数据
+    this.mygroup = await get_group();
+
+    this.mqttManager.setCredentials('sailboat_watch', 'sailboat_watch_2024');
+
+    const clientId = `sailboat_watch_${generateRandomNum()}`;
+
+    const connected = await this.mqttManager.connect(clientId);
+
+    if(connected) {
+      console.info('手表端MQTT连接成功');
+      console.info(this.mqttManager.getConnectionInfo());
+
+      this.myMqttUploadData.ts = formatDateTime(new Date())
+      // 示例发布一条测试消息
+      await this.mqttManager.publish(`mobile/up/general-train/${tenantCode}/1964940865353916418/000`, JSON.stringify(this.myMqttUploadData),1);
+    }
+  }
+
+
+
   aboutToDisappear() {
     try {
       sensor.off(sensor.SensorId.HEART_RATE);
@@ -816,4 +1058,15 @@ struct Index {
     this.keepScreenOn(false);
     this.stopGpsTimer();
   }
+}
+
+function formatDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }

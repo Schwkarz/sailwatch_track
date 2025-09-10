@@ -170,6 +170,9 @@ export class BleManagement {
       // console.log('Received sensor data:', values);
 
       this.ble_sensorData = this.parseWT901Data(values);
+
+      // console.log(`角度: roll: ${this.ble_sensorData.angle.roll},pitch: ${this.ble_sensorData.angle.pitch},yaw: ${this.ble_sensorData.angle.yaw}`);
+
       // console.log('=== 传感器数据 ===');
       // console.log(`加速度: x: ${this.ble_sensorData.acceleration.x},y: ${this.ble_sensorData.acceleration.y},z: ${this.ble_sensorData.acceleration.z}`);
       // console.log(`角速度: x: ${this.ble_sensorData.angularVelocity.x},y: ${this.ble_sensorData.angularVelocity.y},z: ${this.ble_sensorData.angularVelocity.z}`);
