@@ -19,7 +19,7 @@ interface angle {
   yaw : number;
 }
 
-interface SensorData {
+export interface wt_SensorData {
   header: number;          // 数据包头 0x55
   flag: number;            // 标志位 0x61
   acceleration: acceleration;         // 加速度 (单位: m/s^2)
@@ -30,10 +30,14 @@ interface SensorData {
 }
 
 export class BleManagement {
+
   // 保存连接的设备实例
   private connectedDevice: ble.GattClientDevice | null = null;
 
-  public ble_sensorData: SensorData = {
+  // 用一个数组保存一秒内读取到的传感器数据
+  private last1sData: wt_SensorData[] = [];
+
+  public ble_sensorData: wt_SensorData = {
     header : 0,
     flag : 0,
     acceleration : {
@@ -61,6 +65,13 @@ export class BleManagement {
       name: 'WT901BLE67',
     };
     ble.startBLEScan([scanFilter]);
+  }
+
+  //获取最近1s的数据并清空
+  public getLast1sData(): wt_SensorData[] {
+    let result: wt_SensorData[] = this.last1sData;
+    this.last1sData = [];
+    return result;
   }
 
   private printBLE(scanResults: ble.ScanResult[]): void {
@@ -160,16 +171,16 @@ export class BleManagement {
 
     const values: number[] = [];
 
-    // 假设数据包以0x55开头（根据你的设备协议）
+    // 数据包以0x55开头
     if (dataView.getUint8(0) === 0x55) {
-      // 解析数据包（根据你的设备协议）
+      // 解析数据包
       for (let i: number = 0; i < data.byteLength; i++) {
         values.push(dataView.getUint8(i));
       }
 
-      // console.log('Received sensor data:', values);
-
       this.ble_sensorData = this.parseWT901Data(values);
+      // 把数据包放入数组中
+      this.last1sData.push(this.ble_sensorData);
 
       // console.log(`角度: roll: ${this.ble_sensorData.angle.roll},pitch: ${this.ble_sensorData.angle.pitch},yaw: ${this.ble_sensorData.angle.yaw}`);
 
@@ -203,9 +214,9 @@ export class BleManagement {
    * @param values 数据包数组，包含完整的传感器数据
    * @returns 解析后的传感器数据对象
    */
-  private parseWT901Data(values: number[]): SensorData {
+  private parseWT901Data(values: number[]): wt_SensorData {
 
-    let null_data : SensorData= {
+    let null_data : wt_SensorData= {
       header : 0,
       flag : 0,
       acceleration : {
@@ -298,6 +309,59 @@ export class BleManagement {
     return value > 32767 ? value - 65536 : value;
   }
 
+  //转换成适合发送的原始数据内容
+  public formatAngleDataForPosture(sensorDataArray: wt_SensorData[]): string {
+    if (!sensorDataArray || sensorDataArray.length === 0) {
+      return '';
+    }
+
+    // 提取各个角度的数据
+    const rollValues: number[] = [];
+    const yawValues: number[] = [];
+    const pitchValues: number[] = [];
+
+    // 遍历数组，收集所有数据点
+    sensorDataArray.forEach((data, index) => {
+      // 只取前10个数据点（如果数组长度超过10）
+      if (index < 10) {
+        rollValues.push(data.angle.roll);
+        yawValues.push(data.angle.yaw);
+        pitchValues.push(data.angle.pitch);
+      }
+    });
+
+    // 如果数据点不足10个，用最后一个值填充（或者可以根据需求用其他方式处理）
+    while (rollValues.length < 10) {
+      rollValues.push(rollValues.length > 0 ? rollValues[rollValues.length - 1] : 0);
+    }
+    while (yawValues.length < 10) {
+      yawValues.push(yawValues.length > 0 ? yawValues[yawValues.length - 1] : 0);
+    }
+    while (pitchValues.length < 10) {
+      pitchValues.push(pitchValues.length > 0 ? pitchValues[pitchValues.length - 1] : 0);
+    }
+
+    // 格式化字符串：Rol1|Rol2...Rol10,Yaw1|Yaw2...Yaw10,Pitch1|Pitch2...Pitch10
+    const rollString = rollValues.map(val => val.toFixed(3)).join('|');
+    const yawString = yawValues.map(val => val.toFixed(3)).join('|');
+    const pitchString = pitchValues.map(val => val.toFixed(3)).join('|');
+
+    return `${rollString},${yawString},${pitchString}`;
+  }
+
+  public transYaw(): number {
+    let z: number = this.ble_sensorData.angle.yaw;
+    let z1: number = -1;
+
+    if( -180 <= z && z < 90){
+      z1 = 90 - z;
+    }
+    else {
+      z1 = 450 - z;
+    }
+
+    return z1;
+  }
 
   // 断开连接和清理
   public disconnect(): void {

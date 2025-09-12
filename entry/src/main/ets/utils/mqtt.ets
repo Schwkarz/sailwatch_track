@@ -2,6 +2,17 @@ import { MqttClient, MqttConnectOptions, MqttResponse, MqttMessage, MqttQos, Mqt
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
 
+export interface WindDataMessage {
+  windSourceBoatCode: string;    // 风来源教练艇编号
+  windSpeed: number;             // 平均风速 (cm/s,保留4位小数)
+  windDirection: number;         // 平均风向°
+  customWindSpeed: number;       // 自定义风速 (cm/s,保留4位小数)
+  customWindDirection: number;   // 自定义风向°
+  longitude: number;             // 经度 WGS 84 坐标系
+  latitude: number;              // 纬度 WGS 84 坐标系
+  ts: string;                    // 数据GPS时间
+}
+
 export interface original_data {
   mHmId: string,
   ts: string,
@@ -71,7 +82,9 @@ export interface sailboat_data {
 
   yaw: number,        //船首向
   rol: number,        //平衡（横滚角X轴）
+  pitch: number,      //俯仰角（Y轴）
   posture: string | null,    //&航行姿态   倾斜、反扣和平衡
+  pitchPosture: string | null,       //&俯仰姿态   前仰、后仰和平衡
 
   hr: number[]      //舵手心率    第一个为主舵手 [65, -1]
 }
@@ -84,8 +97,21 @@ export interface mqttUploadData {
 
 export class MqttManagement {
   private mqttClient: MqttClient | null = null;
-  private isConnected: boolean = false;
   private reconnectTimer: number | null = null;
+
+  public isConnected: boolean = false;
+
+  private windData: WindDataMessage = {
+    windSourceBoatCode: 'null',
+    windSpeed: -1,
+    windDirection: -1,
+    customWindSpeed: -1,
+    customWindDirection: -1,
+    longitude: -1,
+    latitude: -1,
+    ts: 'null'
+  };
+  private windDataUpdateTime: number = 0;
 
   // 声明类字段
   private host: string;
@@ -252,12 +278,102 @@ export class MqttManagement {
   }
 
   /**
+   * 获取最新的风数据
+   */
+  getLatestWindData(): WindDataMessage {
+    return this.windData;
+  }
+
+  /**
+   * 获取风数据更新时间
+   */
+  getWindDataUpdateTime(): number {
+    return this.windDataUpdateTime;
+  }
+
+  /**
+   * 解析风数据消息
+   */
+  private parseWindDataMessage(message: string): WindDataMessage | null {
+    try {
+      const parsedData: WindDataMessage = JSON.parse(message) as WindDataMessage;
+
+      // 验证必要字段是否存在
+      if (!parsedData.windSourceBoatCode ||
+        !parsedData.windSpeed ||
+        !parsedData.windDirection ||
+        !parsedData.longitude ||
+        !parsedData.latitude ||
+        !parsedData.ts) {
+        console.warn('风数据消息缺少必要字段');
+        return null;
+      }
+
+      const windData: WindDataMessage = {
+        windSourceBoatCode: String(parsedData.windSourceBoatCode),
+        windSpeed: Number(parsedData.windSpeed),
+        windDirection: Number(parsedData.windDirection),
+        customWindSpeed: Number(parsedData.customWindSpeed || 0),
+        customWindDirection: Number(parsedData.customWindDirection || 0),
+        longitude: Number(parsedData.longitude),
+        latitude: Number(parsedData.latitude),
+        ts: String(parsedData.ts)
+      };
+
+      return windData;
+    } catch (error) {
+      console.error(`风数据消息解析失败: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * 处理接收到的消息
    */
   private handleIncomingMessage(topic: string, message: string): void {
-    console.info(`处理消息 [${topic}]: ${message}`);
-    // 在这里添加您的消息处理逻辑
+    // console.info(`处理消息 [${topic}]: ${message}`);
+    try {
+      // 根据主题类型处理不同的消息
+      if (topic.includes('wind') || topic.includes('sailboat')) {
+        // 解析风数据消息
+        const windData = this.parseWindDataMessage(message);
+        if (windData) {
+          this.windData = windData;
+          this.windDataUpdateTime = Date.now();
+          console.info('风数据更新成功:', windData);
 
+          // 触发数据更新事件（如果需要）
+          this.triggerWindDataUpdate(windData);
+        }
+      }
+
+    } catch (error) {
+      console.error(`消息处理失败: ${error.message}`);
+    }
+
+  }
+
+  /**
+   * 触发风数据更新事件（可选）
+   */
+  private triggerWindDataUpdate(data: WindDataMessage): void {
+    // 这里可以添加事件触发逻辑，比如通知其他组件
+    console.info('风数据已更新，时间:', data.ts);
+  }
+  /**
+   * 格式化显示风数据
+   */
+  formatWindDataForDisplay(): string {
+    if (!this.windData) {
+      return '暂无风数据';
+    }
+
+    const data = this.windData;
+    return `风速: ${data.windSpeed.toFixed(2)} cm/s\n` +
+      `风向: ${data.windDirection}°\n` +
+      `位置: ${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}\n` +
+      `时间: ${data.ts}\n` +
+      `来源: ${data.windSourceBoatCode}`;
   }
 
   async publish(topic: string, payload: string, qos: MqttQos = 1): Promise<void> {
@@ -389,7 +505,7 @@ export async function get_level() : Promise<level_rec>{
 
     // 转换为 level_rec 类型
     const result = JSON.parse(String(response.result)) as level_rec;
-    console.log(JSON.stringify(result.data))
+    // console.log(JSON.stringify(result.data))
     // console.log(String(response.result));
     httpRequest.destroy();
     return result;
@@ -400,7 +516,7 @@ export async function get_level() : Promise<level_rec>{
 
 }
 
-export async function get_group() : Promise<group_rec>{
+export async function get_group(levelId: string) : Promise<group_rec>{
 
   let err_group : group_rec = {
     success: false,
@@ -421,7 +537,7 @@ export async function get_group() : Promise<group_rec>{
     const httpRequest = http.createHttp();
 
     const response = await httpRequest.request(
-      "https://test.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/group?levelId=1964940865353916418",
+      `https://test.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/group?levelId=${levelId}`,
       {
         method: http.RequestMethod.GET,
         connectTimeout: 3000
@@ -430,7 +546,7 @@ export async function get_group() : Promise<group_rec>{
 
     // 转换为 level_rec 类型
     const result = JSON.parse(String(response.result)) as group_rec;
-    console.log(JSON.stringify(result.data))
+    // console.log(JSON.stringify(result.data))
     // console.log(String(response.result));
     httpRequest.destroy();
     return result;
