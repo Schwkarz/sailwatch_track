@@ -6,14 +6,36 @@ import { geoLocationManager } from '@kit.LocationKit';
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
 
+
 import {BleManagement, wt_SensorData} from '../utils/bluetoothManage'
 import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data, WindDataMessage} from '../utils/mqtt'
 import {DataUploader} from '../utils/updataloader'
 
+//是否为测试环境
+const is_test: boolean = false;
+//租户编码
+let tenantCode: number = -1;
+//生产环境租户编码
+const product_tenantCode: number = 1023;
+//测试环境租户编码
+const test_tenantCode: number = 1188;
+//url
+let user_url: string = ""
+//测试地址url
+const test_url: string = "180.107.109.102"
+//生产地址url
+const product_url: string = "221.229.219.18"
 
-
-const tenantCode: number = 1188;
-const declination: number = -4;
+//地磁偏移
+const declination: number = -3.8;
+//姿态阈值
+const postureThreshold: number = 1;
+//俯仰姿态阈值
+const pitchpostureThreshold: number = 2;
+//gps精度阈值
+const gps_accuracy_set: number = 30;
+//选择教练艇
+let windBoatsource: number = -1;
 
 //测试延时用
 let now_time: number = 0;
@@ -152,9 +174,22 @@ function generateRandomNum(length: number = 12): string {
 @Entry
 @Component
 struct Index {
+  @Provide pageStackForComponentSharedPages: NavPathStack = new NavPathStack();
+
+  check_test(): void{
+    if(is_test){
+      tenantCode = test_tenantCode;
+      user_url = test_url;
+    }else{
+      tenantCode = product_tenantCode;
+      user_url = product_url;
+    }
+  }
+
   @State heartRate: number = 0;
   @State location: Array<number> = [0,0]; //[0]经度 [1]纬度
-  @State headingT: number = 0;
+  @State headingT: number | null = null;
+  @State gps_accuracy: number = 0;
   sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
   @State speed: number = 0;
   //上传数据的定时器变量
@@ -173,14 +208,118 @@ struct Index {
   //显示网络连接状态
   @State isConnected: boolean = false;
   @State connectionStatusColor: Color = Color.Red
+  @State isbleConnected: boolean = false
+  @State bleconnectionStatusColor: Color = Color.Red
 
   //显示上传状态
   @State isStartUpload: boolean = false;
-  @State buttonString: string = '开始上传'
+  @State buttonString: string = '开始'
 
   dataUploader: DataUploader = new DataUploader();
   @State dataQueueLength : number = 0;
 
+  @State isLongPressing: boolean = false; // 是否正在长按
+  @State longPressTimer: number | undefined = undefined; // 长按计时器
+  @State longPressProgress: number = 0; // 长按进度（0-100）
+  private longPressDuration: number = 2000; // 长按持续时间3秒
+
+  // 在Index组件中添加冷却时间状态
+  @State isCoolingDown: boolean = false; // 冷却状态
+  @State coolDownTimer: number | undefined = undefined; // 冷却计时器
+  private coolDownDuration: number = 1000; // 冷却时间1秒
+
+  // 修改长按检测方法
+  startLongPressDetection(): void {
+    if (this.isLongPressing) return;
+    // 清除之前的计时器
+    if (this.longPressTimer !== undefined) {
+      clearInterval(this.longPressTimer);
+    }
+
+    this.isLongPressing = true;
+    this.longPressProgress = 0;
+
+    const startTime = Date.now();
+    const updateInterval = 50; // 每50ms更新一次进度
+
+    this.longPressTimer = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      this.longPressProgress = Math.min((elapsed / this.longPressDuration) * 100, 100);
+
+      // 达到长按时间
+      if (elapsed >= this.longPressDuration) {
+        this.handleLongPressComplete();
+      }
+    }, updateInterval);
+  }
+  // 长按完成处理
+  handleLongPressComplete(): void {
+    this.stopLongPressDetection();
+    this.stopUpload();
+  }
+
+
+  // 停止长按检测
+  stopLongPressDetection(): void {
+    if (this.longPressTimer !== undefined) {
+      clearInterval(this.longPressTimer);
+      this.longPressTimer = undefined;
+    }
+    this.isLongPressing = false;
+    this.longPressProgress = 0;
+  }
+
+  // 修改停止上传方法，添加冷却时间
+  stopUpload(): void {
+    // 停止MQTT定时器
+    if (this.MqttTimer !== undefined) {
+      clearInterval(this.MqttTimer);
+      this.MqttTimer = undefined;
+    }
+
+    // 断开MQTT连接
+    this.mqttManager.destroy();
+
+    this.isStartUpload = false;
+    this.buttonString = '开始';
+    console.info('长按停止上传成功');
+
+    // 启动冷却时间
+    this.startCoolDown();
+  }
+
+  // 启动冷却时间
+  startCoolDown(): void {
+    this.isCoolingDown = true;
+
+    if (this.coolDownTimer !== undefined) {
+      clearTimeout(this.coolDownTimer);
+    }
+
+    this.coolDownTimer = setTimeout(() => {
+      this.isCoolingDown = false;
+      this.coolDownTimer = undefined;
+      console.info('冷却时间结束，可以重新开始上传');
+    }, this.coolDownDuration);
+  }
+
+  // 修改按钮点击事件，添加冷却时间检查
+  onButtonClick(event?: ClickEvent): void {
+    if (event) {
+      if (this.isCoolingDown) {
+        console.info('冷却时间中，请稍后再试');
+        return;
+      }
+
+      if (!this.isStartUpload) {
+        // 第一次点击，开始上传
+        this.connectWatchMqtt();
+        this.startMqttSend();
+        this.isStartUpload = true;
+        this.buttonString = '停止';
+      }
+    }
+  }
 
   wtBLE: BleManagement = new BleManagement(); // 用于连接并读取wt姿态传感器
 
@@ -258,13 +397,13 @@ struct Index {
 
   //mqtt发送管理器
   mqttManager: MqttManagement = new MqttManagement(
-    '180.107.109.102',
+    "fudan top3",
     1883,
     false
   );
 
   // 新增的状态变量
-  @State currentStep: number = 1; // 1: 选择level, 2: 选择group, 3: 主界面
+  @State currentStep: number = 0; // 0:测试 1: 选择level, 2: 选择group, 3: 主界面
   @State levelButtons: LevelButton[] = [];
   @State groupButtons: GroupButton[] = [];
   @State selectedLevelId: string = '';
@@ -282,7 +421,7 @@ struct Index {
   CACHE_FILE_PATH = 'internal://cache/cache.txt';
 
   //请求位置信息的参数
-  request: geoLocationManager.ContinuousLocationRequest= {
+  gnss_request: geoLocationManager.ContinuousLocationRequest= {
     //高功耗定位
     locationScenario: geoLocationManager.PowerConsumptionScenario.HIGH_POWER_CONSUMPTION,
     //实时上报定位
@@ -300,16 +439,25 @@ struct Index {
   build() {
     Column() {
       Row() {
-        Text(`服务器连接状态：`)
+        Text(`服务器`)
           .fontSize(10)
           .fontWeight(FontWeight.Medium)
         Circle()
           .width(8)
           .height(8)
           .fill(this.connectionStatusColor)
-          .margin({ left: 3 })
+          .margin({ left: 1 })
+        Text(` | 姿态`)
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+        Circle()
+          .width(8)
+          .height(8)
+          .fill(this.bleconnectionStatusColor)
+          .margin({ left: 1 })
       }
       .justifyContent(FlexAlign.Center)
+      .justifyContent(FlexAlign.Start)
       .margin({ top: 10 })
 
       // 根据当前步骤显示不同的界面
@@ -319,6 +467,8 @@ struct Index {
         this.buildGroupSelection()
       } else if (this.currentStep === 3) {
         this.buildMainInterface()
+      } else if (this.currentStep === 0) {
+        this.buildWindSelection();
       }
     }
     .width('100%')
@@ -326,6 +476,48 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .backgroundColor(0x000000)
+  }
+
+  @Builder
+  buildWindSelection() {
+    Row() {
+      Button('1').onClick((event: ClickEvent) => {
+        windBoatsource = 1;
+        this.currentStep = 1;
+      })
+        .width(50)
+        .margin({right : 15})
+      Button('2').onClick((event: ClickEvent) => {
+        windBoatsource = 2;
+        this.currentStep = 1;
+      })
+        .width(50)
+        .margin({right : 15})
+
+      Button('3').onClick((event: ClickEvent) => {
+        windBoatsource = 3;
+        this.currentStep = 1;
+      })
+        .width(50)
+    }
+    .margin({top : 50})
+    .margin({bottom : 20})
+
+    Row(){
+      Button('4').onClick((event: ClickEvent) => {
+        windBoatsource = 4;
+        this.currentStep = 1;
+      })
+        .width(50)
+        .margin({right : 15})
+
+      Button('5').onClick((event: ClickEvent) => {
+        windBoatsource = 5;
+        this.currentStep = 1;
+      })
+        .width(50)
+
+    }
   }
 
   // 构建级别选择界面
@@ -443,106 +635,121 @@ struct Index {
     }
     .height('100%')
     .justifyContent(FlexAlign.Start)
-    .padding(20)
+    .padding(15)
   }
 
-  // 修改 buildMainInterface 方法，也添加滚动支持（如果需要）
   @Builder
   buildMainInterface() {
-    Scroll() {
-      Column() {
-        Text(`水上运动监测`)
-          .fontSize(23)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-          .margin({ bottom: 12 })
+    // 使用 NavDestination 包装主界面内容
+    NavDestination() {
+      Scroll() {
+        Column() {
+          Text(`${this.selectedmhmName} : ${windBoatsource}`)
+            .fontSize(12)
+            .fontColor(Color.Gray)
 
-        Text(`当前选择: ${this.selectedmhmName}`)
-          .fontSize(14)
-          .fontColor(Color.Gray)
-          .margin({ bottom: 10 })
+          Text(`${(this.speed * 1.94).toFixed(1)}`)
+            .fontSize(100)
+            .fontWeight(FontWeight.Medium)
+            .textAlign(TextAlign.Center)
 
-        Text(`❤️ ${this.heartRate} bpm`)
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-          .margin({ bottom: 10 })
+          // 上传按钮区域
+          Stack() {
+            // 上传按钮区域
+            Stack() {
+              // 背景按钮（冷却时变灰色）
+              Button(this.buttonString)
+                .fontSize(12)
+                .type(ButtonType.Capsule)
+                .stateEffect(!this.isCoolingDown) // 冷却时禁用状态效果
+                .backgroundColor(this.isCoolingDown ? 0x888888 :
+                  (this.isLongPressing ? 0xff0000 : 0x317aff))
+                .fontColor(Color.White)
+                .width(100)
+                .height(30)
+                .opacity(this.isCoolingDown ? 0.6 : 1) // 冷却时半透明
+                .onClick((event?: ClickEvent) => this.onButtonClick(event))
+                .onTouch((event: TouchEvent) => {
+                  if (this.isCoolingDown || !this.isStartUpload) return;
 
-        // 这里可以添加其他需要滚动的内容
-        // 例如传感器数据显示等
+                  switch (event.type) {
+                    case TouchType.Down:
+                      this.startLongPressDetection();
+                      break;
+                    case TouchType.Up:
+                    case TouchType.Cancel:
+                      this.stopLongPressDetection();
+                      break;
+                    case TouchType.Move:
+                      // 可以添加移动时的处理逻辑
+                      break;
+                  }
+                })
 
-        Button(this.buttonString)
-          .fontSize(15)
-          .buttonStyle(0)
-          .type(ButtonType.Capsule)
-          .stateEffect(true)
-          .backgroundColor(0x317aff)
-          .fontColor(0xCCCCCC)
-          .margin({ top: 5 })
-          .onClick((event?: ClickEvent) => {
-            if (event) {
-              if (this.isStartUpload) {
-                // this.mqttManager.destroy();
-                this.stopUploadTimer();
-                this.isStartUpload = false;
-                this.buttonString = '开始上传'
-              } else {
-                this.connectWatchMqtt();
-                this.startMqttSend();
+              // 长按进度条
+              if (this.isLongPressing && this.isStartUpload) {
+                Progress({
+                  value: this.longPressProgress,
+                  total: 100,
+                  type: ProgressType.Ring
+                })
+                  .width(50)
+                  .height(50)
+                  .color(Color.Red)
+                  .backgroundColor(0x00000000)
+              }
 
-                // this.startUploadTimer_queue(this.uploadInterval);
-                this.isStartUpload = true;
-                this.buttonString = '停止上传'
+              // 冷却指示器
+              if (this.isCoolingDown) {
+                Progress({
+                  value: 100,
+                  total: 100,
+                  type: ProgressType.Ring
+                })
+                  .width(46)
+                  .height(46)
+                  .color(Color.Gray)
+                  .backgroundColor(0x00000000)
               }
             }
-          })
-        // 添加清除选择按钮
-        Button('重新选择分组')
-          .fontSize(15)
-          .buttonStyle(0)
-          .type(ButtonType.Capsule)
-          .stateEffect(true)
-          .backgroundColor(0x317aff)
-          .fontColor(0xCCCCCC)
-          .margin({ top: 5 })
-          .onClick(() => {
-            // 显示确认对话框
-            AlertDialog.show({
-              title: '重新选择',
-              message: '确定要清除当前选择并重新选择分组吗？',
-              primaryButton: {
-                value: '取消',
-                action: () => {
-                  console.log('取消重新选择');
-                }
-              },
-              secondaryButton: {
-                value: '确定',
-                action: () => {
-                  this.clearAllSelections();
-                }
-              },
-              cancel: () => {
-                console.log('对话框取消');
-              }
-            });
-          })
+            .width(120)
+            .height(40)
+
+            // 提示文字
+            if (this.isStartUpload) {
+              // Text(this.isLongPressing ?
+              //   `松开取消 (${Math.round(this.longPressProgress)}%)` :
+              //   (this.isCoolingDown ? '冷却中...' : '长按3秒停止上传'))
+              //   .fontSize(12)
+              //   .fontColor(this.isCoolingDown ? Color.Gray :
+              //     (this.isLongPressing ? Color.Red : Color.Gray))
+              //   .margin({ top: 5 })
+            }
+          }
+          .width(120)
+          .height(40)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding(10)
       }
       .width('100%')
-      .alignItems(HorizontalAlign.Center)
-      .padding(20)
+      .height('100%')
+      .scrollable(ScrollDirection.Vertical)
+      .scrollBar(BarState.Auto)
     }
-    .width('100%')
-    .height('100%')
-    .scrollable(ScrollDirection.Vertical)
-    .scrollBar(BarState.Auto) // 自动显示滚动条
+    .onBackPressed(() => {
+      // 返回 true 表示已处理返回事件，阻止默认返回行为
+      return false;
+    })
   }
 
-  // 然后修改 loadLevels 方法，明确指定类型
+  // 加载级别
   async loadLevels() {
+
     this.isLoading = true;
     try {
-      const levelData = await get_level();
+      const levelData = await get_level(tenantCode, is_test);
       if (levelData.success && levelData.data.length > 0) {
         // 明确指定类型
         this.levelButtons = levelData.data.map((item) => ({
@@ -574,7 +781,7 @@ struct Index {
 
     try {
       // 根据选中的levelId获取group数据
-      const groupData = await get_group(this.selectedLevelId); // 这里可能需要修改get_group函数来接收levelId参数
+      const groupData = await get_group(this.selectedLevelId, is_test); // 这里可能需要修改get_group函数来接收levelId参数
 
       if (groupData.success && groupData.data.length > 0) {
         // 明确指定类型
@@ -662,10 +869,13 @@ struct Index {
     console.info('已清除所有选择，可以重新选择');
   }
 
+  //监测时间10s，屏幕常量关闭
   aboutToAppear() {
+    this.check_test();
+    this.mqttManager.setHost(user_url);
     this.requestPermissionAndStart();
     this.loadLevels();
-    this.startCheckTimer();
+    this.startCheckTimer(3000);
     this.keepScreenOn(true);
   }
 
@@ -721,7 +931,7 @@ struct Index {
           this.startHeartRateSensor(); // 心率订阅函数
           this.startLocationService(); // 定位
           // this.startAccelerometer();//加速度传感器
-          // this.startUploadTimer_queue(this.uploadInterval);//通过队列上传
+          // this.startUploadTimer_queue(this.uploadInterval);//通过队列上传(http)
           // this.startCheckTimer();//定时监测服务器是否连接成功
           // this.startGpsTimer(300);//通过定时器定位
           // this.uploadData_test();//上传数据（测试用）
@@ -730,7 +940,7 @@ struct Index {
           this.wtBLE.checkDevice();
 
           if(this.currentStep == 3){
-            this.connectWatchMqtt();
+            // this.connectWatchMqtt();
           }
 
         } else {
@@ -740,11 +950,38 @@ struct Index {
     );
   }
 
+  calcLeeway(attitude: string | null, w: number): string {
+    let leeway: number;
+
+    if (w === 0) {
+      leeway = 0;
+    } else {
+      switch (attitude) {
+        case "U_P":
+          leeway = w > 0 ? -w : Math.abs(w);
+          break;
+        case "U_S":
+        case "D_P":
+        case "D_S":
+          leeway = w > 0 ? w : -Math.abs(w);
+          break;
+        default:
+          throw new Error(`未知姿态: ${attitude}`);
+      }
+    }
+
+    return leeway.toString(); // 转为字符串
+  }
+
+
   async startMqttSend(intervalMs: number = 1000) {
 
     this.MqttTimer = setInterval(async () => {
 
       let myWindData: WindDataMessage = this.mqttManager.getLatestWindData();
+      if(myWindData.windSourceBoatCode === "null"){
+        this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
+      }
 
       this.myMqttUploadData.mHmId = this.selectedmhmId;
       this.myMqttUploadData.ts = formatDateTime(new Date());
@@ -755,12 +992,13 @@ struct Index {
       this.myMqttUploadData.data.longitude = String(this.location[0].toFixed(6));
       this.myMqttUploadData.data.latitude = String(this.location[1].toFixed(6));
 
-      this.myMqttUploadData.data.headingT = this.headingT;
-      this.myMqttUploadData.data.headingM = (this.headingT - declination) % 360;
-      this.myMqttUploadData.data.sailStatus = null;
-      this.myMqttUploadData.data.leeway = null;
+      this.myMqttUploadData.data.yaw = Math.trunc(this.wtBLE.transYaw());
+      this.myMqttUploadData.data.rol = Math.trunc(( - this.wtBLE.ble_sensorData.angle.roll));
+      this.myMqttUploadData.data.pitch = Math.trunc((- this.wtBLE.ble_sensorData.angle.pitch));
 
-      this.myMqttUploadData.data.speed = this.speed * 100; //cm/s
+      this.myMqttUploadData.data.speed = toFixedNumber(this.speed * 100); //cm/s，保留4位小数
+
+      this.myMqttUploadData.data.headingT = this.headingT;
 
       this.myMqttUploadData.data.windSourceBoatCode = myWindData.windSourceBoatCode;
       this.myMqttUploadData.data.windSpeed = myWindData.windSpeed;
@@ -768,34 +1006,216 @@ struct Index {
       this.myMqttUploadData.data.customWindSpeed = myWindData.customWindSpeed;
       this.myMqttUploadData.data.customWindDirection = myWindData.customWindDirection;
 
-      this.myMqttUploadData.data.yaw = Math.trunc(this.wtBLE.transYaw());
-      this.myMqttUploadData.data.rol = Math.trunc(( - this.wtBLE.ble_sensorData.angle.roll));
-      this.myMqttUploadData.data.pitch = Math.trunc((- this.wtBLE.ble_sensorData.angle.pitch));
+      //航向存在时
+      if(this.myMqttUploadData.data.headingT){
+        this.myMqttUploadData.data.headingT = Math.trunc(this.myMqttUploadData.data.headingT);
+        this.myMqttUploadData.data.headingM = Math.trunc( (this.myMqttUploadData.data.headingT - declination) % 360 );
 
-      this.myMqttUploadData.data.hr = [this.heartRate,-1];
+        let A : number = this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection
+        if( ( 90 < A && A <= 180) || (-270 < A && A < -180)){
+          this.myMqttUploadData.data.sailStatus = "D_P" //顺风左舷
+        }else if ((-180 < A && A < -90)||(180 < A && A < 270)){
+          this.myMqttUploadData.data.sailStatus = "D_S" //顺风右舷
+        }else if((0 <= A && A <= 90)||(-360 < A && A <= 270)){
+          this.myMqttUploadData.data.sailStatus = "U_P" //迎风左舷
+        }else if((270 <= A && A < 360)||(-90 <= A && A < 0)){
+          this.myMqttUploadData.data.sailStatus = "U_S" //迎风右舷
+        }
+        if(Math.abs(this.myMqttUploadData.data.rol) <= postureThreshold){
+          this.myMqttUploadData.data.posture = "平衡"
+        }else{
+          if(this.myMqttUploadData.data.sailStatus == "U_S" || this.myMqttUploadData.data.sailStatus == "D_S"){
+            if (this.myMqttUploadData.data.rol < -postureThreshold) {
+              this.myMqttUploadData.data.posture = "反扣";
+            }else {
+              this.myMqttUploadData.data.posture = "倾斜";
+            }
+          }else {
+            if (this.myMqttUploadData.data.rol < -postureThreshold) {
+              this.myMqttUploadData.data.posture = "倾斜";
+            }else {
+              this.myMqttUploadData.data.posture = "反扣";
+            }
+          }
+        }
+
+        let w: number = 0;
+        //漂角计算
+        if(Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw) <= 90){
+          w= this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw;
+        }else if(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw > 90){
+          w= this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw - 360;
+        }else if(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw < -90){
+          w = 360 + this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw
+        }
+
+        this.myMqttUploadData.data.leeway = this.calcLeeway(this.myMqttUploadData.data.sailStatus, w);
+
+        //角度和VMG计算
+        if(Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection) <= 180){
+          this.myMqttUploadData.data.angle = Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection);
+        }else {
+          this.myMqttUploadData.data.angle = 360 - Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection);
+        }
+        this.myMqttUploadData.data.vmg = toFixedNumber(this.myMqttUploadData.data.speed * Math.cos(this.myMqttUploadData.data.angle));
+
+        //自定义角度和自定义VMG计算
+        if(Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.customWindDirection) <= 180){
+          this.myMqttUploadData.data.customAngle = Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.customWindDirection);
+        }else {
+          this.myMqttUploadData.data.customAngle = 360 - Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.customWindDirection);
+        }
+        this.myMqttUploadData.data.customVmg = toFixedNumber(this.myMqttUploadData.data.speed * Math.cos(this.myMqttUploadData.data.customAngle)); //保留四位小数
+
+        let windddddd: number = Math.abs(this.myMqttUploadData.data.windSpeed);
+        let standardspeedddddd: number = -1;
+        let standardvmgggggg: number = -1;
+        //顺风时给出标准
+        if(this.myMqttUploadData.data.sailStatus === "D_P" || this.myMqttUploadData.data.sailStatus === "D_S"){
+          if(windddddd <= 5){
+            standardspeedddddd = 0.01;
+            standardvmgggggg = 0.01;
+          }else if(5 < windddddd && windddddd <= 8.00){
+            standardspeedddddd = 4.07;
+            standardvmgggggg = 0.08;
+          }else if(8 < windddddd && windddddd <= 12.00){
+            standardspeedddddd = 5.43;
+            standardvmgggggg = 5.00;
+          }else if(12 < windddddd && windddddd <= 15.00){
+            standardspeedddddd = 7.24;
+            standardvmgggggg = 6.67;
+          }else if(windddddd > 15){
+            standardspeedddddd = 9.31;
+            standardvmgggggg = 8.57;
+          }
+        }else if(this.myMqttUploadData.data.sailStatus === "U_S" || this.myMqttUploadData.data.sailStatus === "U_P"){
+          if(windddddd <= 5){
+            standardspeedddddd = 0.01;
+            standardvmgggggg = 0.01;
+          }else if(5 < windddddd && windddddd <= 8.00){
+            standardspeedddddd = 4.25;
+            standardvmgggggg = 3.16;
+          }else if(8 < windddddd && windddddd <= 12.00){
+            standardspeedddddd = 4.75;
+            standardvmgggggg = 3.53;
+          }else if(12 < windddddd && windddddd <= 15.00){
+            standardspeedddddd = 5.05;
+            standardvmgggggg = 3.75;
+          }else if(windddddd > 15){
+            standardspeedddddd = 4.89;
+            standardvmgggggg = 3.64;
+          }
+        }
+        this.myMqttUploadData.data.standardSpeed = standardspeedddddd;
+        this.myMqttUploadData.data.standardVmg = standardvmgggggg;
+
+        windddddd = Math.abs(this.myMqttUploadData.data.customWindSpeed);
+        standardspeedddddd = -1;
+        standardvmgggggg = -1;
+        //顺风时给出标准
+        if(this.myMqttUploadData.data.sailStatus === "D_P" || this.myMqttUploadData.data.sailStatus === "D_S"){
+          if(windddddd <= 5){
+            standardspeedddddd = 0.01;
+            standardvmgggggg = 0.01;
+          }else if(5 < windddddd && windddddd <= 8.00){
+            standardspeedddddd = 4.07;
+            standardvmgggggg = 0.08;
+          }else if(8 < windddddd && windddddd <= 12.00){
+            standardspeedddddd = 5.43;
+            standardvmgggggg = 5.00;
+          }else if(12 < windddddd && windddddd <= 15.00){
+            standardspeedddddd = 7.24;
+            standardvmgggggg = 6.67;
+          }else if(windddddd > 15){
+            standardspeedddddd = 9.31;
+            standardvmgggggg = 8.57;
+          }
+        }else if(this.myMqttUploadData.data.sailStatus === "U_S" || this.myMqttUploadData.data.sailStatus === "U_P"){
+          if(windddddd <= 5){
+            standardspeedddddd = 0.01;
+            standardvmgggggg = 0.01;
+          }else if(5 < windddddd && windddddd <= 8.00){
+            standardspeedddddd = 4.25;
+            standardvmgggggg = 3.16;
+          }else if(8 < windddddd && windddddd <= 12.00){
+            standardspeedddddd = 4.75;
+            standardvmgggggg = 3.53;
+          }else if(12 < windddddd && windddddd <= 15.00){
+            standardspeedddddd = 5.05;
+            standardvmgggggg = 3.75;
+          }else if(windddddd > 15){
+            standardspeedddddd = 4.89;
+            standardvmgggggg = 3.64;
+          }
+        }
+        this.myMqttUploadData.data.customStandardSpeed = standardspeedddddd;
+        this.myMqttUploadData.data.customStandardVmg = standardvmgggggg;
+
+
+      }
+      //航向不存在
+      else {
+        this.myMqttUploadData.data.headingT = "";
+        this.myMqttUploadData.data.headingM = "";
+        this.myMqttUploadData.data.sailStatus = null;
+        this.myMqttUploadData.data.posture = null;
+        this.myMqttUploadData.data.angle = null;
+        this.myMqttUploadData.data.vmg = null;
+        this.myMqttUploadData.data.customAngle = null;
+        this.myMqttUploadData.data.customVmg = null;
+        if(Math.abs(this.myMqttUploadData.data.rol) <= postureThreshold){
+          this.myMqttUploadData.data.posture = "平衡"
+        }
+      }
+
+      if(this.heartRate != 255 && this.heartRate != 0){
+        this.myMqttUploadData.data.hr = [this.heartRate,-1];
+      }
+      else {
+        this.myMqttUploadData.data.hr = [-1,-1];
+      }
+
+      if(Math.abs(this.myMqttUploadData.data.pitch) <= pitchpostureThreshold){
+        this.myMqttUploadData.data.pitchPosture = "平衡"
+      }else if(this.myMqttUploadData.data.pitch > pitchpostureThreshold){
+        this.myMqttUploadData.data.pitchPosture = "后仰"
+      }else if(this.myMqttUploadData.data.pitch < -pitchpostureThreshold){
+        this.myMqttUploadData.data.pitchPosture = "前俯"
+      }
 
       // 发布航行数据消息
       await this.mqttManager.publish(`mobile/up/general-train/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(this.myMqttUploadData),1);
 
+      let gps_valid: string = "V";
+      if(this.gps_accuracy < gps_accuracy_set){
+        gps_valid = "A";
+      }
       let gps_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "gps",
-        data: `A,${this.myMqttUploadData.data.longitude},${this.myMqttUploadData.data.latitude},${(this.speed * 100).toFixed(4)},${this.myMqttUploadData.data.headingT},${declination}`
+        data: `${gps_valid},${this.myMqttUploadData.data.longitude},${this.myMqttUploadData.data.latitude},${(this.speed * 100).toFixed(4)},${this.myMqttUploadData.data.headingT},${declination}`
       }
+      if(this.myMqttUploadData.data.speed === 0){
+        gps_original_data.data = `${gps_valid},${this.myMqttUploadData.data.longitude},${this.myMqttUploadData.data.latitude},${(this.speed * 100).toFixed(1)},${this.myMqttUploadData.data.headingT},${declination}`
+      }
+
       // 发布航行原始数据
       await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(gps_original_data),1);
 
       let last1sSensorData: wt_SensorData[] = this.wtBLE.getLast1sData();
-
+      let last1sSensorString: string = this.wtBLE.formatAngleDataForPosture(last1sSensorData)
       let posture_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "posture",
         data: `${this.wtBLE.formatAngleDataForPosture(last1sSensorData)}`
       }
-      // 发布姿态原始数据
-      await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(posture_original_data),1);
+      //姿态数据不为空才上传
+      if(last1sSensorString != ""){
+        // 发布姿态原始数据
+        await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(posture_original_data),1);
+      }
 
       let heartRate_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
@@ -812,8 +1232,15 @@ struct Index {
         dataType: "wind",
         data: this.myMqttUploadData.data.windSourceBoatCode
       }
-      //发布风来源原始数据
-      await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(wind_original_data),1);
+      if(wind_original_data.data != "null"){
+        //发布风来源原始数据
+        await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(wind_original_data),1);
+      }
+
+      // let winddatalist: WindDataMessage[] = [];
+      // winddatalist = this.mqttManager.getAllWindData();
+      // console.log(JSON.stringify(winddatalist));
+
 
     }, intervalMs);
   }
@@ -828,14 +1255,36 @@ struct Index {
       let success = this.mqttManager.isConnected;
 
       if(success == true){
+        console.error('已连接')
         this.isConnected = true;
         this.connectionStatusColor = Color.Green;
         // this.dataUploader.tryStartUpload();
       }
       else {
+        console.error('重新连接中')
         this.isConnected = false;
         this.connectionStatusColor = Color.Red;
+        if(windBoatsource != -1){
+          await this.connectWatchMqtt();
+        }
+        // this.startMqttSend()
       }
+
+      success = false;
+      success = this.wtBLE.isConnected()
+      if(success == true){
+        console.error('蓝牙已连接')
+        this.isbleConnected = true;
+        this.bleconnectionStatusColor = Color.Green;
+        // this.dataUploader.tryStartUpload();
+      }
+      else {
+        console.error('蓝牙重新连接中')
+        this.isbleConnected = false;
+        this.bleconnectionStatusColor = Color.Red;
+        // this.startMqttSend()
+      }
+
     }, intervalMs);
     console.info(`启动定时监测，间隔: ${intervalMs}ms`);
   }
@@ -844,7 +1293,6 @@ struct Index {
   startUploadTimer_queue(intervalMs : number = 5000) {
 
     this.stopUploadTimer();
-
 
     console.log(`角度: roll: ${this.wtBLE.ble_sensorData.angle.roll},pitch: ${this.wtBLE.ble_sensorData.angle.pitch},yaw: ${this.wtBLE.ble_sensorData.angle.yaw}`);
 
@@ -938,21 +1386,27 @@ struct Index {
 
   async startLocationService() {
     try{
-      geoLocationManager.on('locationChange',this.request, (location: geoLocationManager.Location) => {
+      geoLocationManager.on('locationChange',this.gnss_request, (location: geoLocationManager.Location) => {
         // console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude)
         if (location.longitude != this.location[0] || location.latitude != this.location[1]){
           this.location[0] = location.longitude;
           this.location[1] = location.latitude;
           location_change += 1;
-
         }
         if(location.speed != this.speed){
           this.speed = location.speed;
         }
-        if(location.direction != this.headingT){
-          this.headingT = location.direction;
+        this.gps_accuracy = location.accuracy;
+
+        if(location.directionAccuracy){
+          if(location.directionAccuracy > 0){
+            this.headingT = location.direction;
+          }
+          else {
+            this.headingT = null
+          }//不可信
         }
-        console.log(`航向： ${location.direction}`)
+        console.log(`位置精度： ${location.accuracy}，航向精度：${location.directionAccuracy}`)
       })
     }
     catch(error){
@@ -1067,6 +1521,8 @@ struct Index {
 
     this.mqttManager.setCredentials('sailboat_watch', 'sailboat_watch_2024');
 
+    this.mqttManager.setKeepalive(10);
+
     const clientId = `sailboat_watch_${this.selectedGroupId}`;
 
     const connected = await this.mqttManager.connect(clientId);
@@ -1074,7 +1530,9 @@ struct Index {
     if(connected) {
       console.info('手表端MQTT连接成功');
       //订阅风速
-      this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/+`,1);
+      if(windBoatsource != -1){
+        this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
+      }
       // console.info(this.mqttManager.getConnectionInfo());
     }
   }
@@ -1105,4 +1563,10 @@ function formatDateTime(date: Date): string {
   const seconds = String(date.getSeconds()).padStart(2, "0");
 
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+// 通用方法，保留指定小数位数
+function toFixedNumber(value: number, decimalPlaces: number = 4): number {
+  const factor = Math.pow(10, decimalPlaces);
+  return Math.round(value * factor) / factor;
 }

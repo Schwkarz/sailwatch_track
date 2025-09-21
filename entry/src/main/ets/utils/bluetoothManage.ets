@@ -1,6 +1,8 @@
 import { ble } from '@kit.ConnectivityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
+const device_name: string = "WT901BLE91";
+
 interface acceleration {
   x : number;
   y : number;
@@ -33,7 +35,6 @@ export class BleManagement {
 
   // 保存连接的设备实例
   private connectedDevice: ble.GattClientDevice | null = null;
-
   // 用一个数组保存一秒内读取到的传感器数据
   private last1sData: wt_SensorData[] = [];
 
@@ -59,10 +60,19 @@ export class BleManagement {
     timestamp : 0
   }
 
+  public isConnected(): boolean {
+    if(this.connectedDevice){
+      return true;
+    }
+    else {
+      return false;
+    }
+  }
+
   public checkDevice(): void {
     ble.on('BLEDeviceFind', this.printBLE.bind(this));
     let scanFilter: ble.ScanFilter = {
-      name: 'WT901BLE67',
+      name: device_name,
     };
     ble.startBLEScan([scanFilter]);
   }
@@ -77,11 +87,6 @@ export class BleManagement {
   private printBLE(scanResults: ble.ScanResult[]): void {
     console.log(JSON.stringify(scanResults[0]));
     let result = scanResults[0];
-    for (let i = 0; i < result.data.byteLength; i++) {
-      if (result.data[i] == 0x55) {
-        console.log('0x55');
-      }
-    }
     this.tryConnect(scanResults[0].deviceId);
   }
 

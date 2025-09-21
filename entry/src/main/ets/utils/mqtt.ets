@@ -56,8 +56,8 @@ export interface sailboat_data {
   longitude: string, //GPS经度
   latitude: string,  //GPS纬度
 
-  headingT: number,  //航向 °（真北）
-  headingM: number,  //航向 °（磁北） headingM = (headingT - declination) % 360
+  headingT: number | null | string,  //航向 °（真北）
+  headingM: number | null | string,  //航向 °（磁北） headingM = (headingT - declination) % 360
   sailStatus: string | null,//&航行状态
   leeway: string | null,    //&漂角
 
@@ -72,7 +72,6 @@ export interface sailboat_data {
   customAngle: number | null,
   customVmg: number | null,
   customStandardVmg: number | null,
-
 
   windSourceBoatCode: string,       //风数据来源
   windSpeed: number,                //平均风速        (cm/s,保留4位小数)
@@ -145,6 +144,15 @@ export class MqttManagement {
     this.host = host;
     this.port = port;
     this.useSSL = useSSL;
+  }
+
+  setHost(url: string): void {
+    this.host = url;
+  }
+
+  //设置心跳
+  setKeepalive(keepalive: number): void {
+    this.connectOptions.keepAliveInterval = keepalive;
   }
 
   /**
@@ -274,7 +282,7 @@ export class MqttManagement {
         console.info(`收到消息 [${topic}]: ${messageData}`);
         this.handleIncomingMessage(topic, messageData);
 
-    });
+      });
   }
 
   /**
@@ -334,7 +342,7 @@ export class MqttManagement {
     // console.info(`处理消息 [${topic}]: ${message}`);
     try {
       // 根据主题类型处理不同的消息
-      if (topic.includes('wind') || topic.includes('sailboat')) {
+      if (topic.includes('wind')) {
         // 解析风数据消息
         const windData = this.parseWindDataMessage(message);
         if (windData) {
@@ -478,7 +486,7 @@ export class MqttManagement {
   }
 }
 
-export async function get_level() : Promise<level_rec>{
+export async function get_level(tenantCode: number, is_test: boolean) : Promise<level_rec>{
 
   let err_level : level_rec = {
     success: false,
@@ -491,12 +499,18 @@ export async function get_level() : Promise<level_rec>{
       }
     ]
   }
+  let url: string = ""
+  if(is_test){
+    url = `https://test.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/level?tenantCode=${tenantCode}`
+  }else {
+    url = `https://sport.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/level?tenantCode=${tenantCode}`
+  }
 
   try{
     const httpRequest = http.createHttp();
 
     const response = await httpRequest.request(
-      "https://test.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/level?tenantCode=1188",
+      url,
       {
         method: http.RequestMethod.GET,
         connectTimeout: 3000
@@ -516,7 +530,56 @@ export async function get_level() : Promise<level_rec>{
 
 }
 
-export async function get_group(levelId: string) : Promise<group_rec>{
+export async function get_group(levelId: string, is_test: boolean) : Promise<group_rec>{
+
+  let err_group : group_rec = {
+    success: false,
+    errCode: "null",
+    errMessage: "err",
+    data: [
+      {
+        groupId: "err",
+        groupName: "err",
+        color: "err",
+        mhmId: "err",
+        mhmName: "err"
+      }
+    ]
+  }
+
+  let url: string = ""
+  if(is_test){
+    url = `https://test.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/group?levelId=${levelId}`
+  }else {
+    url = `https://sport.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/group?levelId=${levelId}`
+  }
+
+
+  try{
+    const httpRequest = http.createHttp();
+
+    const response = await httpRequest.request(
+      url,
+      {
+        method: http.RequestMethod.GET,
+        connectTimeout: 3000
+      }
+    )
+
+    // 转换为 level_rec 类型
+    const result = JSON.parse(String(response.result)) as group_rec;
+    // console.log(JSON.stringify(result.data))
+    // console.log(String(response.result));
+    httpRequest.destroy();
+    return result;
+  } catch (err) {
+    console.error(err.message)
+    return err_group
+  }
+
+}
+
+export async function get_group_test(levelId: string) : Promise<group_rec>{
 
   let err_group : group_rec = {
     success: false,
