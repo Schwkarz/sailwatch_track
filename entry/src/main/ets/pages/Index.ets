@@ -5,6 +5,7 @@ import window from '@ohos.window';
 import { geoLocationManager } from '@kit.LocationKit';
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
+import { promptAction, ShowDialogSuccessResponse } from '@kit.ArkUI';
 
 
 import {BleManagement, wt_SensorData} from '../utils/bluetoothManage'
@@ -12,7 +13,7 @@ import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_r
 import {DataUploader} from '../utils/updataloader'
 
 //是否为测试环境
-const is_test: boolean = false;
+const is_test: boolean = true;
 //租户编码
 let tenantCode: number = -1;
 //生产环境租户编码
@@ -46,6 +47,9 @@ let location_change: number = 0;
 
 //gps定时器
 let gpsTimer: number | undefined = undefined;
+
+let last_wind: WindDataMessage;
+let last_last_wind: WindDataMessage;
 
 
 // 在接口定义部分添加新的状态类型
@@ -145,7 +149,7 @@ function uploadDataToString(data: UploadData): string {
     data.speed.toString(),
     data.sensorData.join(','),
     data.timestamp.toString(),
-    // data.lag_time.toString() // 新增字段
+  // data.lag_time.toString() // 新增字段
   ].join('|'); // 使用 | 分隔不同字段
 }
 
@@ -174,7 +178,10 @@ function generateRandomNum(length: number = 12): string {
 @Entry
 @Component
 struct Index {
-  @Provide pageStackForComponentSharedPages: NavPathStack = new NavPathStack();
+
+  // 添加 Navigation 控制器
+  @State pageStack: NavPathStack = new NavPathStack();
+  @State hasInitiatedJump: boolean = false;
 
   check_test(): void{
     if(is_test){
@@ -227,6 +234,325 @@ struct Index {
   @State isCoolingDown: boolean = false; // 冷却状态
   @State coolDownTimer: number | undefined = undefined; // 冷却计时器
   private coolDownDuration: number = 1000; // 冷却时间1秒
+
+  // 新增的状态变量
+  // @State currentStep: number = 0; // 0:测试 1: 选择level, 2: 选择group, 3: 主界面
+  @State levelButtons: LevelButton[] = [];
+  @State groupButtons: GroupButton[] = [];
+  @State selectedLevelId: string = '';
+  @State selectedGroupId: string = '';
+  @State selectedmhmName: string = '';
+  @State selectedmhmId: string = '';
+  @State isLoading: boolean = false;
+  @State selectedGroupColor: string = "#000000"; //默认黑色
+
+  @Builder
+  PagesMap(name: string) {
+    if (name == 'WindInterfaceBuilder') {
+      this.WindInterfaceBuilder('WindInterfaceBuilder');
+    }else if(name == 'LevelSelection'){
+      this.levelSelectionBuilder('LevelSelection');
+    }else if(name == 'GroupSelection'){
+      this.groupSelectionBuilder('GroupSelection')
+    }else if(name == 'LoadInterface'){
+      this.loadInterfaceBuilder('LoadInterface')
+    }
+  }
+
+  build() {
+    Navigation(this.pageStack) {
+      this.WindInterfaceBuilder('WindInterfaceBuilder') // 传入 @Builder 函数所需的 name 参数
+    }
+    .navDestination(this.PagesMap)
+  }
+
+  // 页面跳转方法
+  pushPage(pageName: string, param?: Object) {
+    this.pageStack.pushPathByName(pageName, param, false);
+  }
+
+  popPage() {
+    this.pageStack.pop();
+  }
+
+
+  // 风源选择页面 - 修复方法名和跳转逻辑
+  @Builder
+  WindInterfaceBuilder(name: string) {
+    NavDestination()
+    {
+      Column() { // 外层 Column（根容器）
+        Text(`请选择教练艇`)
+          .margin({top:10,bottom:10})
+        Column() { // 内层 Column（按钮区域）
+          Row() {
+            Button('1').onClick(() => { windBoatsource = 1; this.pushPage('LevelSelection') })
+              .width(60).height(60).margin({ right: 10 })
+            Button('2').onClick(() => { windBoatsource = 2; this.pushPage('LevelSelection') })
+              .width(60).height(60).margin({ right: 10 })
+            Button('3').onClick(() => { windBoatsource = 3; this.pushPage('LevelSelection') })
+              .width(60).height(60)
+          }
+          .margin({ bottom: 15 })
+          .justifyContent(FlexAlign.Center)
+
+          Row() {
+            Button('4').onClick(() => { windBoatsource = 4; this.pushPage('LevelSelection') })
+              .width(60).height(60).margin({ right: 10 })
+            Button('5').onClick(() => { windBoatsource = 5; this.pushPage('LevelSelection') })
+              .width(60).height(60)
+          }
+          .justifyContent(FlexAlign.Center)
+          .width('100%')
+          // .height('100%')
+        }
+      }
+      .width('100%')
+      .height(1000)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Black)
+    .hideTitleBar(true)
+    .mode(NavDestinationMode.STANDARD)
+    .onBackPressed(()=>{
+      return true;
+    })
+  }
+
+  // 级别选择页面 - 修复跳转逻辑
+  @Builder
+  levelSelectionBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('请选择级别')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 10 })
+          .fontColor(Color.White)
+
+        if (this.isLoading) {
+          LoadingProgress()
+            .color(Color.White)
+            .margin({ bottom: 10 })
+          Text('加载中...')
+            .fontSize(14)
+            .fontColor(Color.Gray)
+        } else if (this.levelButtons.length === 0) {
+          Text('暂无级别数据')
+            .fontSize(16)
+            .fontColor(Color.Gray)
+            .margin({ bottom: 10 })
+          Button('重新加载')
+            .onClick(() => this.loadLevels())
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.levelButtons, (item: LevelButton) => {
+                Button(item.levelName)
+                  .fontSize(16)
+                  .type(ButtonType.Capsule)
+                  .stateEffect(true)
+                  .backgroundColor(item.selected ? 0x317aff : 0x444444)
+                  .fontColor(Color.White)
+                  .margin({ bottom: 10 })
+                  .onClick(() => this.selectLevel(item.levelId))
+              })
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+          }
+          .width('100%')
+          .height('60%')
+        }
+      }
+      .height('100%')
+      .justifyContent(FlexAlign.Start)
+      .padding(20)
+      .backgroundColor(0x000000)
+    }
+    .onAppear(() => { // <---  在这里添加 onAppear
+      // 当此页面出现时，自动加载级别列表
+      this.loadLevels();
+    })
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      this.popPage();  // 允许返回上一页
+      return true;
+    })
+  }
+
+  // 分组选择页面
+  @Builder
+  groupSelectionBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('请选择分组')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 10 })
+          .fontColor(Color.White)
+
+        if (this.isLoading) {
+          LoadingProgress()
+            .color(Color.White)
+            .margin({ bottom: 10 })
+          Text('加载中...')
+            .fontSize(14)
+            .fontColor(Color.Gray)
+        } else if (this.groupButtons.length === 0) {
+          Text('暂无分组数据')
+            .fontSize(16)
+            .fontColor(Color.Gray)
+            .margin({ bottom: 10 })
+          Button('返回上一级')
+            .onClick(() => this.popPage())
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.groupButtons, (item: GroupButton) => {
+                Button(item.mhmName)
+                  .fontSize(16)
+                  .type(ButtonType.Capsule)
+                  .stateEffect(true)
+                  .backgroundColor(item.selected ? 0x317aff : 0x444444)
+                  .fontColor(Color.White)
+                  .margin({ bottom: 10 })
+                  .width('80%')
+                  .onClick(() => this.selectGroup(item.groupId, item.mhmId, item.mhmName, item.color))
+              })
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+          }
+          .width('100%')
+          .height('60%')
+
+          Button('返回')
+            .fontSize(14)
+            .type(ButtonType.Capsule)
+            .backgroundColor(0x666666)
+            .fontColor(Color.White)
+            .margin({ bottom: 10 })
+            .onClick(() => this.popPage())
+        }
+      }
+      .height('100%')
+      .justifyContent(FlexAlign.Start)
+      .padding(15)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      this.popPage();
+      return true;
+    })
+  }
+
+  // 主界面
+  @Builder
+  loadInterfaceBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        // 状态指示行
+        Row() {
+          Text(`服务器`)
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+          Circle()
+            .width(8)
+            .height(8)
+            .fill(this.connectionStatusColor)
+            .margin({ left: 5, right: 15 })
+          Text(`姿态`)
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+          Circle()
+            .width(8)
+            .height(8)
+            .fill(this.bleconnectionStatusColor)
+            .margin({ left: 5 })
+        }
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 15, bottom: 10 })
+
+        // 船名信息
+        Text(`${this.selectedmhmName} : ${windBoatsource}`)
+          .fontSize(12)
+          .fontColor(Color.Gray)
+          .margin({ bottom: 5 })
+
+        // 速度显示
+        Text(`${(this.speed * 1.94).toFixed(1)}`)
+          .fontSize(80) // 稍微调小字体
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: 20 })
+
+        // 上传按钮区域
+        Column() {
+          Stack() {
+            Button(this.buttonString)
+              .fontSize(16)
+              .type(ButtonType.Capsule)
+              .stateEffect(!this.isCoolingDown)
+              .backgroundColor(this.isCoolingDown ? 0x888888 :
+                (this.isLongPressing ? 0xff0000 : 0x317aff))
+              .fontColor(Color.White)
+              .width(120)
+              .height(40)
+              .opacity(this.isCoolingDown ? 0.6 : 1)
+              .onClick((event?: ClickEvent) => this.onButtonClick(event))
+              .onTouch((event: TouchEvent) => {
+                if (this.isCoolingDown || !this.isStartUpload) return;
+                switch (event.type) {
+                  case TouchType.Down:
+                    this.startLongPressDetection();
+                    break;
+                  case TouchType.Up:
+                  case TouchType.Cancel:
+                    this.stopLongPressDetection();
+                    break;
+                }
+              })
+
+            if (this.isLongPressing && this.isStartUpload) {
+              Progress({ value: this.longPressProgress, total: 100, type: ProgressType.Ring })
+                .width(40)
+                .height(40)
+                .color(Color.Red)
+                .backgroundColor(0x00000000)
+            }
+
+            if (this.isCoolingDown) {
+              Progress({ value: 100, total: 100, type: ProgressType.Ring })
+                .width(40)
+                .height(40)
+                .color(Color.Gray)
+                .backgroundColor(0x00000000)
+            }
+          }
+          .width(130)
+          .height(50)
+
+        }
+        .alignItems(HorizontalAlign.Center)
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+
+      return true;
+
+    })
+  }
 
   // 修改长按检测方法
   startLongPressDetection(): void {
@@ -402,17 +728,6 @@ struct Index {
     false
   );
 
-  // 新增的状态变量
-  @State currentStep: number = 0; // 0:测试 1: 选择level, 2: 选择group, 3: 主界面
-  @State levelButtons: LevelButton[] = [];
-  @State groupButtons: GroupButton[] = [];
-  @State selectedLevelId: string = '';
-  @State selectedGroupId: string = '';
-  @State selectedmhmName: string = '';
-  @State selectedmhmId: string = '';
-  @State isLoading: boolean = false;
-  @State selectedGroupColor: string = "#000000"; //默认黑色
-
 
   //缓存文件用
   //获取应用沙箱路径
@@ -436,313 +751,6 @@ struct Index {
   };
 
 
-  build() {
-    Column() {
-      Row() {
-        Text(`服务器`)
-          .fontSize(10)
-          .fontWeight(FontWeight.Medium)
-        Circle()
-          .width(8)
-          .height(8)
-          .fill(this.connectionStatusColor)
-          .margin({ left: 1 })
-        Text(` | 姿态`)
-          .fontSize(10)
-          .fontWeight(FontWeight.Medium)
-        Circle()
-          .width(8)
-          .height(8)
-          .fill(this.bleconnectionStatusColor)
-          .margin({ left: 1 })
-      }
-      .justifyContent(FlexAlign.Center)
-      .justifyContent(FlexAlign.Start)
-      .margin({ top: 10 })
-
-      // 根据当前步骤显示不同的界面
-      if (this.currentStep === 1) {
-        this.buildLevelSelection()
-      } else if (this.currentStep === 2) {
-        this.buildGroupSelection()
-      } else if (this.currentStep === 3) {
-        this.buildMainInterface()
-      } else if (this.currentStep === 0) {
-        this.buildWindSelection();
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor(0x000000)
-  }
-
-  @Builder
-  buildWindSelection() {
-    Row() {
-      Button('1').onClick((event: ClickEvent) => {
-        windBoatsource = 1;
-        this.currentStep = 1;
-      })
-        .width(50)
-        .margin({right : 15})
-      Button('2').onClick((event: ClickEvent) => {
-        windBoatsource = 2;
-        this.currentStep = 1;
-      })
-        .width(50)
-        .margin({right : 15})
-
-      Button('3').onClick((event: ClickEvent) => {
-        windBoatsource = 3;
-        this.currentStep = 1;
-      })
-        .width(50)
-    }
-    .margin({top : 50})
-    .margin({bottom : 20})
-
-    Row(){
-      Button('4').onClick((event: ClickEvent) => {
-        windBoatsource = 4;
-        this.currentStep = 1;
-      })
-        .width(50)
-        .margin({right : 15})
-
-      Button('5').onClick((event: ClickEvent) => {
-        windBoatsource = 5;
-        this.currentStep = 1;
-      })
-        .width(50)
-
-    }
-  }
-
-  // 构建级别选择界面
-  @Builder
-  buildLevelSelection() {
-    Column() {
-      Text('请选择级别')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .margin({ bottom: 10 })
-        .fontColor(Color.White)
-
-      if (this.isLoading) {
-        LoadingProgress()
-          .color(Color.White)
-          .margin({ bottom: 10 })
-        Text('加载中...')
-          .fontSize(14)
-          .fontColor(Color.Gray)
-      } else if (this.levelButtons.length === 0) {
-        Text('暂无级别数据')
-          .fontSize(16)
-          .fontColor(Color.Gray)
-          .margin({ bottom: 10 })
-        Button('重新加载')
-          .onClick(() => this.loadLevels())
-      } else {
-        Scroll(){
-          Column() {
-            ForEach(this.levelButtons, (item: LevelButton) => {
-              Button(item.levelName)
-                .fontSize(16)
-                .type(ButtonType.Capsule)
-                .stateEffect(true)
-                .backgroundColor(item.selected ? 0x317aff : 0x444444)
-                .fontColor(Color.White)
-                .margin({ bottom: 10 })
-                .onClick(() => this.selectLevel(item.levelId))
-            })
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Center)
-        }
-        .width('100%')
-        .height('60%') // 设置滚动区域高度
-        .scrollable(ScrollDirection.Vertical) // 垂直滚动
-        .scrollBar(BarState.On) // 显示滚动条
-        .scrollBarColor(Color.Gray) // 滚动条颜色
-        .edgeEffect(EdgeEffect.Spring) // 滚动边缘效果
-      }
-    }
-    .height('100%')
-    .justifyContent(FlexAlign.Start)
-    .padding(20)
-  }
-
-  // 修改 buildGroupSelection 方法
-  @Builder
-  buildGroupSelection() {
-    Column() {
-      Text('请选择分组')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .margin({ bottom: 10 })
-        .fontColor(Color.White)
-
-      if (this.isLoading) {
-        LoadingProgress()
-          .color(Color.White)
-          .margin({ bottom: 10 })
-        Text('加载中...')
-          .fontSize(14)
-          .fontColor(Color.Gray)
-      } else if (this.groupButtons.length === 0) {
-        Text('暂无分组数据')
-          .fontSize(16)
-          .fontColor(Color.Gray)
-          .margin({ bottom: 10 })
-        Button('返回上一级')
-          .onClick(() => this.currentStep = 1)
-      } else {
-        // 使用 Scroll 组件包装按钮列表
-        Scroll() {
-          Column() {
-            ForEach(this.groupButtons, (item: GroupButton) => {
-              Button(item.mhmName)
-                .fontSize(16)
-                .type(ButtonType.Capsule)
-                .stateEffect(true)
-                .backgroundColor(item.selected ? 0x317aff : 0x444444)
-                .fontColor(Color.White)
-                .margin({ bottom: 10 })
-                .width('80%') // 限制按钮宽度
-                .onClick(() => this.selectGroup(item.groupId, item.mhmId, item.mhmName, item.color))
-            })
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Center)
-        }
-        .width('100%')
-        .height('60%') // 设置滚动区域高度
-        .scrollable(ScrollDirection.Vertical)
-        .scrollBar(BarState.On)
-        .scrollBarColor(Color.Gray)
-        .edgeEffect(EdgeEffect.Spring)
-
-        Button('返回')
-          .fontSize(14)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x666666)
-          .fontColor(Color.White)
-          .margin({ bottom: 10 })
-          .onClick(() => this.currentStep = 1)
-      }
-    }
-    .height('100%')
-    .justifyContent(FlexAlign.Start)
-    .padding(15)
-  }
-
-  @Builder
-  buildMainInterface() {
-    // 使用 NavDestination 包装主界面内容
-    NavDestination() {
-      Scroll() {
-        Column() {
-          Text(`${this.selectedmhmName} : ${windBoatsource}`)
-            .fontSize(12)
-            .fontColor(Color.Gray)
-
-          Text(`${(this.speed * 1.94).toFixed(1)}`)
-            .fontSize(100)
-            .fontWeight(FontWeight.Medium)
-            .textAlign(TextAlign.Center)
-
-          // 上传按钮区域
-          Stack() {
-            // 上传按钮区域
-            Stack() {
-              // 背景按钮（冷却时变灰色）
-              Button(this.buttonString)
-                .fontSize(12)
-                .type(ButtonType.Capsule)
-                .stateEffect(!this.isCoolingDown) // 冷却时禁用状态效果
-                .backgroundColor(this.isCoolingDown ? 0x888888 :
-                  (this.isLongPressing ? 0xff0000 : 0x317aff))
-                .fontColor(Color.White)
-                .width(100)
-                .height(30)
-                .opacity(this.isCoolingDown ? 0.6 : 1) // 冷却时半透明
-                .onClick((event?: ClickEvent) => this.onButtonClick(event))
-                .onTouch((event: TouchEvent) => {
-                  if (this.isCoolingDown || !this.isStartUpload) return;
-
-                  switch (event.type) {
-                    case TouchType.Down:
-                      this.startLongPressDetection();
-                      break;
-                    case TouchType.Up:
-                    case TouchType.Cancel:
-                      this.stopLongPressDetection();
-                      break;
-                    case TouchType.Move:
-                      // 可以添加移动时的处理逻辑
-                      break;
-                  }
-                })
-
-              // 长按进度条
-              if (this.isLongPressing && this.isStartUpload) {
-                Progress({
-                  value: this.longPressProgress,
-                  total: 100,
-                  type: ProgressType.Ring
-                })
-                  .width(50)
-                  .height(50)
-                  .color(Color.Red)
-                  .backgroundColor(0x00000000)
-              }
-
-              // 冷却指示器
-              if (this.isCoolingDown) {
-                Progress({
-                  value: 100,
-                  total: 100,
-                  type: ProgressType.Ring
-                })
-                  .width(46)
-                  .height(46)
-                  .color(Color.Gray)
-                  .backgroundColor(0x00000000)
-              }
-            }
-            .width(120)
-            .height(40)
-
-            // 提示文字
-            if (this.isStartUpload) {
-              // Text(this.isLongPressing ?
-              //   `松开取消 (${Math.round(this.longPressProgress)}%)` :
-              //   (this.isCoolingDown ? '冷却中...' : '长按3秒停止上传'))
-              //   .fontSize(12)
-              //   .fontColor(this.isCoolingDown ? Color.Gray :
-              //     (this.isLongPressing ? Color.Red : Color.Gray))
-              //   .margin({ top: 5 })
-            }
-          }
-          .width(120)
-          .height(40)
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Center)
-        .padding(10)
-      }
-      .width('100%')
-      .height('100%')
-      .scrollable(ScrollDirection.Vertical)
-      .scrollBar(BarState.Auto)
-    }
-    .onBackPressed(() => {
-      // 返回 true 表示已处理返回事件，阻止默认返回行为
-      return false;
-    })
-  }
 
   // 加载级别
   async loadLevels() {
@@ -767,9 +775,8 @@ struct Index {
     }
   }
 
-  // 同样，在 selectLevel 方法中加载 group 数据时也要明确类型
+  // 修改 selectLevel 方法 - 修复跳转
   async selectLevel(levelId: string) {
-    // 更新选中状态
     this.levelButtons = this.levelButtons.map(item => ({
       levelId: item.levelId,
       levelName: item.levelName,
@@ -780,19 +787,18 @@ struct Index {
     this.isLoading = true;
 
     try {
-      // 根据选中的levelId获取group数据
-      const groupData = await get_group(this.selectedLevelId, is_test); // 这里可能需要修改get_group函数来接收levelId参数
-
+      const groupData = await get_group(this.selectedLevelId, is_test);
       if (groupData.success && groupData.data.length > 0) {
-        // 明确指定类型
         this.groupButtons = groupData.data.map((item) => ({
           groupId: item.groupId,
           mhmName: item.mhmName,
           mhmId: item.mhmId,
           selected: false,
           color: item.color || '#317aff'
-        } as GroupButton)); // 使用类型断言
-        this.currentStep = 2; // 切换到group选择界面
+        } as GroupButton));
+
+        // 使用正确的方法跳转
+        this.pushPage('GroupSelection');
       } else {
         console.error('获取分组数据失败');
       }
@@ -803,12 +809,8 @@ struct Index {
     }
   }
 
-  // 在 selectGroup 方法中也使用类型断言
+  // 修改 selectGroup 方法 - 修复跳转
   selectGroup(groupId: string, mhmId: string, mhmName: string, groupColor: string) {
-    // 找到选中的分组对象来获取颜色
-    const selectedGroup = this.groupButtons.find(item => item.groupId === groupId);
-    const color = selectedGroup ? selectedGroup.color : '#317aff'; // 默认蓝色
-    // 更新选中状态
     this.groupButtons = this.groupButtons.map(item => ({
       groupId: item.groupId,
       mhmName: item.mhmName,
@@ -826,55 +828,19 @@ struct Index {
     this.mygroup.data[0].groupId = groupId;
     this.mygroup.data[0].mhmId = mhmId;
     this.mygroup.data[0].mhmName = mhmName;
-    this.mygroup.data[0].color = color;
+    this.mygroup.data[0].color = groupColor;
 
-    // 切换到主界面
-    this.currentStep = 3;
-
-    console.info(`已选择: LevelId=${this.selectedLevelId}, GroupId=${this.selectedGroupId}, MhmName=${this.selectedmhmName}, Color=${this.selectedGroupColor}`);
+    // 切换到主界面 - 使用正确的方法名
+    this.pushPage('LoadInterface');
+    this.connectWatchMqtt();
   }
 
-  // 添加清除选择的方法
-  clearAllSelections() {
-    // 重置级别选择
-    this.levelButtons = this.levelButtons.map(item => ({
-      levelId: item.levelId,
-      levelName: item.levelName,
-      selected: false
-    } as LevelButton));
-
-    // 重置分组选择
-    this.groupButtons = this.groupButtons.map(item => ({
-      groupId: item.groupId,
-      mhmName: item.mhmName,
-      mhmId: item.mhmId,
-      color: item.color,
-      selected: false
-    } as GroupButton));
-
-    // 清空选择记录
-    this.selectedLevelId = '';
-    this.selectedGroupId = '';
-    this.selectedGroupColor = '#000000';
-
-    // 重置mygroup数据
-    this.mygroup.data[0].groupId = "err";
-    this.mygroup.data[0].mhmId = "err";
-    this.mygroup.data[0].mhmName = "err";
-    this.mygroup.data[0].color = "err";
-
-    // 返回到级别选择界面
-    this.currentStep = 1;
-
-    console.info('已清除所有选择，可以重新选择');
-  }
-
-  //监测时间10s，屏幕常量关闭
+  //监测时间3s，屏幕常量关闭
   aboutToAppear() {
     this.check_test();
     this.mqttManager.setHost(user_url);
     this.requestPermissionAndStart();
-    this.loadLevels();
+    // this.loadLevels();
     this.startCheckTimer(3000);
     this.keepScreenOn(true);
   }
@@ -902,7 +868,8 @@ struct Index {
       'ohos.permission.INTERNET' as Permissions,
       'ohos.permission.ACCESS_BLUETOOTH' as Permissions,
       'ohos.permission.DISCOVER_BLUETOOTH' as Permissions,
-      'ohos.permission.USE_BLUETOOTH' as Permissions
+      'ohos.permission.USE_BLUETOOTH' as Permissions,
+      'ohos.permission.KEEP_BACKGROUND_RUNNING' as Permissions
     ];
 
     atManager.requestPermissionsFromUser(
@@ -928,7 +895,7 @@ struct Index {
         const allGranted = data.authResults.every(result => result === 0);
         if (allGranted) {
           console.info('所有权限已授权,开始监测');
-          this.startHeartRateSensor(); // 心率订阅函数
+          // this.startHeartRateSensor(); // 心率订阅函数
           this.startLocationService(); // 定位
           // this.startAccelerometer();//加速度传感器
           // this.startUploadTimer_queue(this.uploadInterval);//通过队列上传(http)
@@ -938,11 +905,8 @@ struct Index {
           // this.startUploadTimer(this.uploadInterval);//定时上传数据
           // this.runCapacityTests();//上传数据容量测试
           this.wtBLE.checkDevice();
-
-          if(this.currentStep == 3){
-            // this.connectWatchMqtt();
-          }
-
+          // this.popPage();
+          // this.pushPage('WindInterfaceBuilder')
         } else {
           console.warn('部分权限未授权，功能可能受限');
         }
@@ -979,8 +943,13 @@ struct Index {
     this.MqttTimer = setInterval(async () => {
 
       let myWindData: WindDataMessage = this.mqttManager.getLatestWindData();
+      //三次数据一样
+      if(myWindData === last_wind && last_wind == last_last_wind && !is_test){
+        console.error("wind lost")
+        // this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
+      }
       if(myWindData.windSourceBoatCode === "null"){
-        this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
+        // this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
       }
 
       this.myMqttUploadData.mHmId = this.selectedmhmId;
@@ -1234,8 +1203,11 @@ struct Index {
       }
       if(wind_original_data.data != "null"){
         //发布风来源原始数据
-        await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(wind_original_data),1);
+        // await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(wind_original_data),1);
       }
+
+      last_last_wind = last_wind;
+      last_wind = myWindData;
 
       // let winddatalist: WindDataMessage[] = [];
       // winddatalist = this.mqttManager.getAllWindData();
@@ -1265,13 +1237,13 @@ struct Index {
         this.isConnected = false;
         this.connectionStatusColor = Color.Red;
         if(windBoatsource != -1){
-          await this.connectWatchMqtt();
+          // await this.connectWatchMqtt();
         }
         // this.startMqttSend()
       }
 
       success = false;
-      success = this.wtBLE.isConnected()
+      success =  await this.wtBLE.checkDeviceName()
       if(success == true){
         console.error('蓝牙已连接')
         this.isbleConnected = true;
@@ -1282,6 +1254,7 @@ struct Index {
         console.error('蓝牙重新连接中')
         this.isbleConnected = false;
         this.bleconnectionStatusColor = Color.Red;
+        this.wtBLE.checkDevice()
         // this.startMqttSend()
       }
 
@@ -1351,11 +1324,9 @@ struct Index {
     if (this.uploadTimer !== undefined || this.uploadTimer_buffer !== undefined) {
       clearInterval(this.uploadTimer);
       clearInterval(this.uploadTimer_buffer);
-      // clearInterval(this.checkTimer);
       clearInterval(this.MqttTimer);
       this.uploadTimer = undefined;
       this.uploadTimer_buffer = undefined;
-      // this.checkTimer = undefined;
       this.MqttTimer = undefined;
       console.info('停止定时上传');
     }
@@ -1406,7 +1377,7 @@ struct Index {
             this.headingT = null
           }//不可信
         }
-        console.log(`位置精度： ${location.accuracy}，航向精度：${location.directionAccuracy}`)
+        // console.log(`位置精度： ${location.accuracy}，航向精度：${location.directionAccuracy}`)
       })
     }
     catch(error){
@@ -1532,17 +1503,20 @@ struct Index {
       //订阅风速
       if(windBoatsource != -1){
         this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
+      }else {
+        console.error("no windboat selection")
       }
-      // console.info(this.mqttManager.getConnectionInfo());
     }
   }
 
-  aboutToDisappear() {
+  async aboutToDisappear() {
     try {
       sensor.off(sensor.SensorId.HEART_RATE);
       sensor.off(sensor.SensorId.ACCELEROMETER_UNCALIBRATED);
       this.stopUploadTimer();
-      this.mqttManager.destroy();
+      if (this.mqttManager) {
+        await this.mqttManager.destroy(); // 必须等待彻底断开
+      }
       this.wtBLE.disconnect();
       geoLocationManager.off('locationChange');
       console.log('定位服务关闭');

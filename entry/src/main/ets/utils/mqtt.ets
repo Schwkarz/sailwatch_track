@@ -1,4 +1,4 @@
-import { MqttClient, MqttConnectOptions, MqttResponse, MqttMessage, MqttQos, MqttSubscribeOptions } from '@ohos/mqtt';
+import { MqttClient, MqttConnectOptions, MqttMessage, MqttQos, MqttSubscribeOptions } from '@ohos/mqtt';
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
 
@@ -97,8 +97,11 @@ export interface mqttUploadData {
 export class MqttManagement {
   private mqttClient: MqttClient | null = null;
   private reconnectTimer: number | null = null;
+  public isConnected = false;
 
-  public isConnected: boolean = false;
+  private disposed = false;         // 已销毁标记
+  private connecting = false;       // 正在连接标记
+  private manualReconnect = true;   // 与 automaticReconnect 二选一
 
   private windData: WindDataMessage = {
     windSourceBoatCode: 'null',
@@ -117,18 +120,13 @@ export class MqttManagement {
   private port: number;
   private useSSL: boolean;
 
-
-  // 连接配置选项（用户名密码可选）
   private connectOptions: MqttConnectOptions = {
-    userName: undefined,      // 设置为undefined表示可选
-    password: undefined,      // 设置为undefined表示可选
+    // 建议：若使用手动重连则关闭自动重连
+    automaticReconnect: false,              // ← 与手动重连二选一
     connectTimeout: 30,
-    sslOptions: {
-      enableServerCertAuth: true
-    },
     keepAliveInterval: 60,
     cleanSession: true,
-    automaticReconnect: true,
+    sslOptions: { enableServerCertAuth: true },
   };
 
   /**
@@ -182,59 +180,93 @@ export class MqttManagement {
 
 
 
-  async connect(customClientId? : string): Promise<boolean> {
+  async connect(customClientId?: string): Promise<boolean> {
+    if (this.disposed || this.connecting) return false;
+    this.connecting = true;
     try {
-      const clientId: string = customClientId ?? `mqtt_${Math.random().toString(16).slice(3)}`;
-      const protocol = this.useSSL ? 'mqtts' : 'mqtt';
+      // 若已有旧实例但未完全断开，先清理
+      if (this.mqttClient) {
+        await this.safeDisconnectAndClear("preconnect");
+      }
 
-      // const clientId = `mqtt_${Math.random().toString(16).slice(3)}`;
-      // const protocol = this.useSSL ? 'mqtts' : 'mqtt';
+      const clientId = customClientId ?? `mqtt_${Math.random().toString(16).slice(3)}`;
+      const protocol = this.useSSL ? 'mqtts' : 'mqtt';
       const url = `${protocol}://${this.host}:${this.port}`;
 
-      // 创建MQTT客户端实例
       this.mqttClient = new MqttClient({
-        url: url,
-        clientId: clientId,
+        url,
+        clientId,
         persistenceType: 1,
       });
 
-      // 设置事件监听器
-      this.setupEventListeners();
+      this.setupEventListeners(); // 注册监听器
 
-      // 构建连接选项
+      // 拼接最终选项（避免重复设置 automaticReconnect）
       const finalOptions: MqttConnectOptions = {
-        connectTimeout: this.connectOptions.connectTimeout || 30,
-        sslOptions: {
-          enableServerCertAuth: true
-        },
-        keepAliveInterval: this.connectOptions.keepAliveInterval || 60,
+        connectTimeout: this.connectOptions.connectTimeout ?? 30,
+        keepAliveInterval: this.connectOptions.keepAliveInterval ?? 60,
         cleanSession: this.connectOptions.cleanSession ?? true,
-        automaticReconnect: this.connectOptions.automaticReconnect ?? true
+        sslOptions: { enableServerCertAuth: true },
+        automaticReconnect: this.connectOptions.automaticReconnect ?? false,
+        userName: this.connectOptions.userName,
+        password: this.connectOptions.password,
       };
 
-      // 可选添加用户名密码
-      if (this.connectOptions.userName) {
-        finalOptions.userName = this.connectOptions.userName;
-      }
-      if (this.connectOptions.password) {
-        finalOptions.password = this.connectOptions.password;
-      }
-
-      // 建立连接
-      const response: MqttResponse = await this.mqttClient.connect(finalOptions);
-
-      // 连接成功处理
-      const authType = this.hasCredentials() ? '认证连接' : '匿名连接';
-      console.info(`MQTT${authType}成功: ${JSON.stringify(response)}`);
+      const response = await this.mqttClient.connect(finalOptions);
+      console.info(`MQTT连接成功: ${JSON.stringify(response)}`);
       this.isConnected = true;
-
       return true;
     } catch (error) {
       console.error(`MQTT连接失败: ${JSON.stringify(error)}`);
       this.isConnected = false;
-      this.scheduleReconnect();
+      if (this.manualReconnect) this.scheduleReconnect();
       return false;
+    } finally {
+      this.connecting = false;
     }
+  }
+
+  // 注销监听器（若 SDK 支持置空/移除；没有则用 disposed 标记短路）
+  private removeEventListeners(): void {
+    if (!this.mqttClient) return;
+    try {
+      // 若有对应 API，示意如下：
+      this.mqttClient.messageArrived((_err: Error, _msg: MqttMessage) => { if (this.disposed) return; });
+      this.mqttClient.connectLost((_err: Error) => { /* no-op */ });
+
+    } catch {}
+  }
+
+  // 统一的安全断开 + 清理
+  private async safeDisconnectAndClear(tag = ""): Promise<void> {
+    this.removeEventListeners(); // 先移除监听，避免断开过程中仍回调
+    if (this.mqttClient && this.isConnected) {
+      try {
+        await this.mqttClient.disconnect();      // 必须等待断开完成
+        console.info(`MQTT连接已断开(${tag})`);
+      } catch (e) {
+        console.error(`断开连接失败(${tag}): ${JSON.stringify(e)}`);
+      }
+    }
+    this.isConnected = false;
+    this.mqttClient = null;
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    // 若已经在连接或已销毁，不再重连
+    if (this.connecting || this.disposed) return;
+
+    this.reconnectTimer = setTimeout(() => {
+      if (this.disposed) return;
+      console.info('尝试重新连接MQTT服务器...');
+      this.connect().catch((err: Error) => {
+        console.error('重连失败:', err);
+      });
+    }, 5000);
   }
 
   /**
@@ -338,7 +370,7 @@ export class MqttManagement {
   /**
    * 处理接收到的消息
    */
-  private handleIncomingMessage(topic: string, message: string): void {
+  private async handleIncomingMessage(topic: string, message: string): Promise<void> {
     // console.info(`处理消息 [${topic}]: ${message}`);
     try {
       // 根据主题类型处理不同的消息
@@ -431,24 +463,6 @@ export class MqttManagement {
   }
 
   /**
-   * 安排重连
-   */
-  private scheduleReconnect(): void {
-    // 先清除现有的重连定时器
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    this.reconnectTimer = setTimeout(() => {
-      console.info('尝试重新连接MQTT服务器...');
-      this.connect().catch((err: Error) => {
-        console.error('重连失败:', err);
-      });
-    }, 5000);
-  }
-
-  /**
    * 清理重连定时器
    */
   private clearReconnectTimer(): void {
@@ -458,31 +472,19 @@ export class MqttManagement {
     }
   }
 
-  /**
-   * 断开连接（需要调用清理方法）
-   */
   async disconnect(): Promise<void> {
-    this.clearReconnectTimer(); // 清理重连定时器
-
-    if (this.mqttClient && this.isConnected) {
-      try {
-        await this.mqttClient.disconnect();
-        console.info('MQTT连接已正常断开');
-      } catch (error) {
-        console.error(`断开连接失败: ${JSON.stringify(error)}`);
-      } finally {
-        this.isConnected = false;
-        this.mqttClient = null;
-      }
-    }
+    // 手动调用断开时，也要确保不再重连
+    this.clearReconnectTimer();
+    await this.safeDisconnectAndClear("manual");
   }
 
-  /**
-   * 销毁资源
-   */
-  destroy(): void {
-    this.clearReconnectTimer(); // 清理重连定时器
-    this.disconnect(); // 断开连接
+  async destroy(): Promise<void> {
+    // 标记为已销毁，所有回调短路
+    this.removeEventListeners();
+    this.disposed = true;
+    this.clearReconnectTimer();
+    // 等待断开完成，确保 native 层不再派发
+    await this.safeDisconnectAndClear("destroy");
   }
 }
 

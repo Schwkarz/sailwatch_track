@@ -1,7 +1,7 @@
 import { ble } from '@kit.ConnectivityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
-const device_name: string = "WT901BLE91";
+const device_name: string = "WT901BLE12";
 
 interface acceleration {
   x : number;
@@ -38,6 +38,8 @@ export class BleManagement {
   // 用一个数组保存一秒内读取到的传感器数据
   private last1sData: wt_SensorData[] = [];
 
+  private isScanning: boolean = false;
+
   public ble_sensorData: wt_SensorData = {
     header : 0,
     flag : 0,
@@ -61,20 +63,88 @@ export class BleManagement {
   }
 
   public isConnected(): boolean {
+
     if(this.connectedDevice){
+
+      let name: Promise<string> = this.connectedDevice?.getDeviceName();
+      console.log(`getDeviceName: ${name}`)
       return true;
+
     }
     else {
       return false;
     }
   }
 
+  // 新增：断开连接回调函数
+  private onDisconnectCallback: (() => void) | null = null;
+
+  // 设置断开连接回调
+  public setOnDisconnectCallback(callback: () => void): void {
+    this.onDisconnectCallback = callback;
+  }
+
+  // 清除断开连接回调
+  public clearOnDisconnectCallback(): void {
+    this.onDisconnectCallback = null;
+  }
+
+  // 修改 confirmConnect 方法
+  private confirmConnect(state: ble.BLEConnectionChangeState): void {
+    if (state.state === 2) { // 2 表示已连接
+      console.log('connected');
+      this.readData();
+      this.isScanning = false;
+    } else if (state.state === 0) { // 0 表示断开连接
+      console.log('disconnected');
+      this.handleDisconnection();
+    }
+  }
+
+  private handleDisconnection(): void {
+    console.log('设备连接已断开');
+    this.connectedDevice = null;
+
+    // 调用断开连接回调
+    if (this.onDisconnectCallback) {
+      try {
+        this.onDisconnectCallback();
+      } catch (error) {
+        console.error('断开连接回调执行错误:', error);
+      }
+    }
+  }
+
+  async checkDeviceName(): Promise<boolean> {
+    try {
+      const name: string | undefined = await this.connectedDevice?.getDeviceName();
+      if(!name){
+        return false;
+      }
+      console.log(`getDeviceName: ${name}`);
+
+      // 与普通字符串比较
+      if (name === device_name) {
+        return true;
+      } else {
+        return false;
+      }
+    } catch (error) {
+      console.error("Error getting device name:", error);
+      return false;
+    }
+  }
+
   public checkDevice(): void {
-    ble.on('BLEDeviceFind', this.printBLE.bind(this));
-    let scanFilter: ble.ScanFilter = {
-      name: device_name,
-    };
-    ble.startBLEScan([scanFilter]);
+    if(!this.isScanning){
+      this.isScanning = true;
+      console.log("start scan");
+      ble.on('BLEDeviceFind', this.printBLE.bind(this));
+      let scanFilter: ble.ScanFilter = {
+        name: device_name,
+      };
+      ble.startBLEScan([scanFilter]);
+    }
   }
 
   //获取最近1s的数据并清空
@@ -95,13 +165,6 @@ export class BleManagement {
     this.connectedDevice = ble.createGattClientDevice(deviceID);
     this.connectedDevice.on('BLEConnectionStateChange', this.confirmConnect.bind(this));
     this.connectedDevice.connect();
-  }
-
-  private confirmConnect(state: ble.BLEConnectionChangeState): void {
-    if (state.state == 2) { // 2 表示已连接
-      console.log('connected');
-      this.readData();
-    }
   }
 
   // 实现读取数据的核心方法
