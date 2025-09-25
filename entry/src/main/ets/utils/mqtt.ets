@@ -103,6 +103,8 @@ export class MqttManagement {
   private connecting = false;       // 正在连接标记
   private manualReconnect = true;   // 与 automaticReconnect 二选一
 
+  private clientId: string = '';    //客户端ID
+
   private windData: WindDataMessage = {
     windSourceBoatCode: 'null',
     windSpeed: -1,
@@ -144,6 +146,12 @@ export class MqttManagement {
     this.useSSL = useSSL;
   }
 
+  //设置id
+  setClientId(id: string): void {
+    this.clientId = id;
+  }
+
+  //设置url
   setHost(url: string): void {
     this.host = url;
   }
@@ -180,7 +188,7 @@ export class MqttManagement {
 
 
 
-  async connect(customClientId?: string): Promise<boolean> {
+  async connect(): Promise<boolean> {
     if (this.disposed || this.connecting) return false;
     this.connecting = true;
     try {
@@ -189,7 +197,7 @@ export class MqttManagement {
         await this.safeDisconnectAndClear("preconnect");
       }
 
-      const clientId = customClientId ?? `mqtt_${Math.random().toString(16).slice(3)}`;
+      const clientId = this.clientId;
       const protocol = this.useSSL ? 'mqtts' : 'mqtt';
       const url = `${protocol}://${this.host}:${this.port}`;
 
@@ -232,7 +240,7 @@ export class MqttManagement {
     try {
       // 若有对应 API，示意如下：
       this.mqttClient.messageArrived((_err: Error, _msg: MqttMessage) => { if (this.disposed) return; });
-      this.mqttClient.connectLost((_err: Error) => { /* no-op */ });
+      this.mqttClient.connectLost((_err: Error) => { });
 
     } catch {}
   }
@@ -253,6 +261,7 @@ export class MqttManagement {
   }
 
   private scheduleReconnect(): void {
+    console.log("scheduleReconnect")
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

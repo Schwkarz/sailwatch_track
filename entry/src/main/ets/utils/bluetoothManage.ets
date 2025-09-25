@@ -33,6 +33,8 @@ export interface wt_SensorData {
 
 export class BleManagement {
 
+  private disposed: boolean = false;
+
   // 保存连接的设备实例
   private connectedDevice: ble.GattClientDevice | null = null;
   // 用一个数组保存一秒内读取到的传感器数据
@@ -67,7 +69,7 @@ export class BleManagement {
     if(this.connectedDevice){
 
       let name: Promise<string> = this.connectedDevice?.getDeviceName();
-      console.log(`getDeviceName: ${name}`)
+      // console.log(`getDeviceName: ${name}`)
       return true;
 
     }
@@ -433,9 +435,13 @@ export class BleManagement {
 
   // 断开连接和清理
   public disconnect(): void {
+    this.disposed = true;
     if (this.connectedDevice) {
+      this.connectedDevice.off('BLEConnectionStateChange', this.confirmConnect);
+      this.connectedDevice.off('BLECharacteristicChange');
       this.connectedDevice.disconnect();
       this.connectedDevice = null;
     }
   }
+
 }

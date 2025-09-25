@@ -13,7 +13,7 @@ import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_r
 import {DataUploader} from '../utils/updataloader'
 
 //是否为测试环境
-const is_test: boolean = true;
+const is_test: boolean = false;
 //租户编码
 let tenantCode: number = -1;
 //生产环境租户编码
@@ -34,7 +34,7 @@ const postureThreshold: number = 1;
 //俯仰姿态阈值
 const pitchpostureThreshold: number = 2;
 //gps精度阈值
-const gps_accuracy_set: number = 30;
+const gps_accuracy_set: number = 20;
 //选择教练艇
 let windBoatsource: number = -1;
 
@@ -580,6 +580,7 @@ struct Index {
   }
   // 长按完成处理
   handleLongPressComplete(): void {
+    console.log('长按完成')
     this.stopLongPressDetection();
     this.stopUpload();
   }
@@ -604,7 +605,8 @@ struct Index {
     }
 
     // 断开MQTT连接
-    this.mqttManager.destroy();
+    // this.mqttManager.destroy();
+    this.stopUploadTimer();
 
     this.isStartUpload = false;
     this.buttonString = '开始';
@@ -632,14 +634,15 @@ struct Index {
   // 修改按钮点击事件，添加冷却时间检查
   onButtonClick(event?: ClickEvent): void {
     if (event) {
+
       if (this.isCoolingDown) {
         console.info('冷却时间中，请稍后再试');
         return;
       }
 
       if (!this.isStartUpload) {
-        // 第一次点击，开始上传
-        this.connectWatchMqtt();
+        //不在上传状态中
+        // this.connectWatchMqtt();
         this.startMqttSend();
         this.isStartUpload = true;
         this.buttonString = '停止';
@@ -905,8 +908,6 @@ struct Index {
           // this.startUploadTimer(this.uploadInterval);//定时上传数据
           // this.runCapacityTests();//上传数据容量测试
           this.wtBLE.checkDevice();
-          // this.popPage();
-          // this.pushPage('WindInterfaceBuilder')
         } else {
           console.warn('部分权限未授权，功能可能受限');
         }
@@ -942,14 +943,20 @@ struct Index {
 
     this.MqttTimer = setInterval(async () => {
 
+      // 如果未连接，直接取消
+      if(!this.mqttManager.isConnected){
+        console.error('fail to connect to the server')
+        return;
+      }
+
       let myWindData: WindDataMessage = this.mqttManager.getLatestWindData();
       //三次数据一样
       if(myWindData === last_wind && last_wind == last_last_wind && !is_test){
-        console.error("wind lost")
+        // console.error("wind lost")
         // this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
       }
       if(myWindData.windSourceBoatCode === "null"){
-        // this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
+        this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
       }
 
       this.myMqttUploadData.mHmId = this.selectedmhmId;
@@ -1119,8 +1126,6 @@ struct Index {
         }
         this.myMqttUploadData.data.customStandardSpeed = standardspeedddddd;
         this.myMqttUploadData.data.customStandardVmg = standardvmgggggg;
-
-
       }
       //航向不存在
       else {
@@ -1135,6 +1140,14 @@ struct Index {
         if(Math.abs(this.myMqttUploadData.data.rol) <= postureThreshold){
           this.myMqttUploadData.data.posture = "平衡"
         }
+      }
+      //风不存在
+      if(this.myMqttUploadData.data.windSpeed == -1){
+        this.myMqttUploadData.data.sailStatus = null;
+        this.myMqttUploadData.data.angle = null;
+        this.myMqttUploadData.data.vmg = null;
+        this.myMqttUploadData.data.customAngle = null;
+        this.myMqttUploadData.data.customVmg = null;
       }
 
       if(this.heartRate != 255 && this.heartRate != 0){
@@ -1190,7 +1203,7 @@ struct Index {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "heartrate",
-        data: `${this.heartRate}|-1`
+        data: `${this.myMqttUploadData.data.hr}|-1`
       }
       //发布心率原始数据
       await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(heartRate_original_data),1);
@@ -1203,7 +1216,7 @@ struct Index {
       }
       if(wind_original_data.data != "null"){
         //发布风来源原始数据
-        // await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(wind_original_data),1);
+        await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(wind_original_data),1);
       }
 
       last_last_wind = last_wind;
@@ -1233,13 +1246,17 @@ struct Index {
         // this.dataUploader.tryStartUpload();
       }
       else {
-        console.error('重新连接中')
+
         this.isConnected = false;
         this.connectionStatusColor = Color.Red;
         if(windBoatsource != -1){
           // await this.connectWatchMqtt();
+          console.error('重新连接中')
         }
-        // this.startMqttSend()
+        if(this.isStartUpload){
+          this.startMqttSend()
+        }
+
       }
 
       success = false;
@@ -1496,7 +1513,9 @@ struct Index {
 
     const clientId = `sailboat_watch_${this.selectedGroupId}`;
 
-    const connected = await this.mqttManager.connect(clientId);
+    this.mqttManager.setClientId(clientId);
+
+    const connected = await this.mqttManager.connect();
 
     if(connected) {
       console.info('手表端MQTT连接成功');
