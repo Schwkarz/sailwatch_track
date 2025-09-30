@@ -1,7 +1,7 @@
 import { ble } from '@kit.ConnectivityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
-const device_name: string = "WT901BLE12";
+const device_name: string = "WT901BLE91";
 
 interface acceleration {
   x : number;

@@ -275,6 +275,7 @@ struct Index {
     this.pageStack.pop();
   }
 
+  button_size: number = 50;
 
   // 风源选择页面 - 修复方法名和跳转逻辑
   @Builder
@@ -287,28 +288,28 @@ struct Index {
         Column() { // 内层 Column（按钮区域）
           Row() {
             Button('1').onClick(() => { windBoatsource = 1; this.pushPage('LevelSelection') })
-              .width(60).height(60).margin({ right: 10 })
+              .width(this.button_size).height(this.button_size).margin({ right: 10 })
             Button('2').onClick(() => { windBoatsource = 2; this.pushPage('LevelSelection') })
-              .width(60).height(60).margin({ right: 10 })
+              .width(this.button_size).height(this.button_size).margin({ right: 10 })
             Button('3').onClick(() => { windBoatsource = 3; this.pushPage('LevelSelection') })
-              .width(60).height(60)
+              .width(this.button_size).height(this.button_size)
           }
-          .margin({ bottom: 15 })
+          .margin({ bottom: 10 })
           .justifyContent(FlexAlign.Center)
 
           Row() {
             Button('4').onClick(() => { windBoatsource = 4; this.pushPage('LevelSelection') })
-              .width(60).height(60).margin({ right: 10 })
+              .width(this.button_size).height(this.button_size).margin({ right: 10 })
             Button('5').onClick(() => { windBoatsource = 5; this.pushPage('LevelSelection') })
-              .width(60).height(60)
+              .width(this.button_size).height(this.button_size)
           }
           .justifyContent(FlexAlign.Center)
           .width('100%')
-          // .height('100%')
+          .height('10%')
         }
       }
       .width('100%')
-      .height(1000)
+      .height('100%')
     }
     .width('100%')
     .height('100%')
