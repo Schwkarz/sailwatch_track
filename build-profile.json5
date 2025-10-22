@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\30294\\.ohos\\config\\default_sailwatch_track_F8DrKptPfmvVDDCvn75XZvt6R4YV3F8pRFH6SgL33bA=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001BF0DF56AFC1175D641FDD1A90C0E0781B5BF7A04A35CD2AB78BFEBBBA7654FF73DBFF0AF591B4F7",
+          "keyPassword": "0000001B8046E39321FA1633578C5BF9C07B7D14AF6663E268F15D1FCE3C6D14A62E588B6EC33F90BFBC1E",
           "profile": "C:\\Users\\30294\\.ohos\\config\\default_sailwatch_track_F8DrKptPfmvVDDCvn75XZvt6R4YV3F8pRFH6SgL33bA=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\30294\\.ohos\\config\\default_sailwatch_track_F8DrKptPfmvVDDCvn75XZvt6R4YV3F8pRFH6SgL33bA=.p12",
-          "storePassword": "0000001BFF045EF2EC260ABA5B890CE0DAF72076ECD367FFCA63CB22B6E65830B236C17A1F6F67330F778A"
+          "storePassword": "0000001BDDC6DA211BCF3F3AFE2BE0789D2597E31315FBAD09A66BD38225E6395DAD889D06BA0688A8B87F"
         }
       }
     ],

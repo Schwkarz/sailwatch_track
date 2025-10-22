@@ -5,12 +5,13 @@ import window from '@ohos.window';
 import { geoLocationManager } from '@kit.LocationKit';
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
-import { promptAction, ShowDialogSuccessResponse } from '@kit.ArkUI';
-
+import { promptAction, ShowDialogSuccessResponse, display } from '@kit.ArkUI';
+import { notificationManager } from '@kit.NotificationKit'
 
 import {BleManagement, wt_SensorData} from '../utils/bluetoothManage'
 import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data, WindDataMessage} from '../utils/mqtt'
 import {DataUploader} from '../utils/updataloader'
+import { data } from '@kit.TelephonyKit';
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -173,7 +174,65 @@ function generateRandomNum(length: number = 12): string {
   return new Array(length).fill(0).map(() => Math.floor(Math.random() * 10)).join('');
 }
 
+// 定义一个发布通知的函数
+function sendNotification() {
+  const id = Date.now(); // 唯一ID
+  const notificationRequest: notificationManager.NotificationRequest = {
+    id,
+    content: {
+      notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+      normal: {
+        title: "通知",
+        text: "这是一个通知",
+        additionalText: "触发时间：" + new Date().toLocaleTimeString()
+      }
+    }
+  };
 
+  notificationManager.publish(notificationRequest, (err: BusinessError) => {
+    if (err) {
+      console.error(`发布通知失败，错误码: ${err.code}, 信息: ${err.message}`);
+    } else {
+      console.info("通知发布成功");
+
+      // 1 秒后自动取消
+      setTimeout(() => {
+        notificationManager.cancel(id, (cancelErr: BusinessError) => {
+          if (cancelErr) {
+            console.error(`取消通知失败: ${cancelErr.code}, ${cancelErr.message}`);
+          } else {
+            console.info("通知已自动取消");
+          }
+        });
+      }, 1000);
+    }
+  });
+}
+
+// 定义一个定时器，每隔 10 秒发送一次通知
+function startTimerNotification(interval: number = 10000) {
+  setInterval(() => {
+    display.getAllDisplays((err: BusinessError, data: Array<display.Display>) => {
+      const errCode: number = err.code;
+      if (errCode) {
+        console.error(`Failed to obtain all the display objects. Code: ${err.code}, message: ${err.message}`);
+        return;
+      }
+      if(data && data.length > 0){
+        if(data[0].state == 1){
+          sendNotification();
+        }
+      }else {
+        console.error('no displaydata')
+      }
+      console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data[0].state)}`);
+    });
+
+
+
+
+  }, interval);
+}
 
 @Entry
 @Component
@@ -235,8 +294,6 @@ struct Index {
   @State coolDownTimer: number | undefined = undefined; // 冷却计时器
   private coolDownDuration: number = 1000; // 冷却时间1秒
 
-  // 新增的状态变量
-  // @State currentStep: number = 0; // 0:测试 1: 选择level, 2: 选择group, 3: 主界面
   @State levelButtons: LevelButton[] = [];
   @State groupButtons: GroupButton[] = [];
   @State selectedLevelId: string = '';
@@ -245,6 +302,9 @@ struct Index {
   @State selectedmhmId: string = '';
   @State isLoading: boolean = false;
   @State selectedGroupColor: string = "#000000"; //默认黑色
+
+  @State button_size: number = 60;
+
 
   @Builder
   PagesMap(name: string) {
@@ -256,14 +316,22 @@ struct Index {
       this.groupSelectionBuilder('GroupSelection')
     }else if(name == 'LoadInterface'){
       this.loadInterfaceBuilder('LoadInterface')
+    }else if(name == 'test'){
+      this.testBuilder('test')
     }
   }
 
   build() {
     Navigation(this.pageStack) {
-      this.WindInterfaceBuilder('WindInterfaceBuilder') // 传入 @Builder 函数所需的 name 参数
+
     }
+    .width('100%')
+    .height('100%')
     .navDestination(this.PagesMap)
+    .hideNavBar(true)
+    .hideTitleBar(true)
+    .hideBackButton(true)
+    .hideToolBar(true)
   }
 
   // 页面跳转方法
@@ -275,9 +343,19 @@ struct Index {
     this.pageStack.pop();
   }
 
-  button_size: number = 50;
+  @Builder
+  testBuilder(name: string) {
+    Column(){
+      Text("123")
+        .fontSize(50)
+    }
+    .width('100%')
+    .height('100%') // 让 Column 占满父容器
+    .backgroundColor(Color.White)
+    .justifyContent(FlexAlign.Center)
+  }
 
-  // 风源选择页面 - 修复方法名和跳转逻辑
+  // 风源选择页面
   @Builder
   WindInterfaceBuilder(name: string) {
     NavDestination()
@@ -294,7 +372,7 @@ struct Index {
             Button('3').onClick(() => { windBoatsource = 3; this.pushPage('LevelSelection') })
               .width(this.button_size).height(this.button_size)
           }
-          .margin({ bottom: 10 })
+          .margin({ bottom: 10, top: 15 })
           .justifyContent(FlexAlign.Center)
 
           Row() {
@@ -304,8 +382,6 @@ struct Index {
               .width(this.button_size).height(this.button_size)
           }
           .justifyContent(FlexAlign.Center)
-          .width('100%')
-          .height('10%')
         }
       }
       .width('100%')
@@ -315,13 +391,13 @@ struct Index {
     .height('100%')
     .backgroundColor(Color.Black)
     .hideTitleBar(true)
-    .mode(NavDestinationMode.STANDARD)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed(()=>{
       return true;
     })
   }
 
-  // 级别选择页面 - 修复跳转逻辑
+  // 级别选择页面
   @Builder
   levelSelectionBuilder(name: string) {
     NavDestination() {
@@ -733,12 +809,6 @@ struct Index {
   );
 
 
-  //缓存文件用
-  //获取应用沙箱路径
-  context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-  // CACHE_FILE_PATH = `${this.context.getApplicationContext()}/cache/data_cache.json`;
-  CACHE_FILE_PATH = 'internal://cache/cache.txt';
-
   //请求位置信息的参数
   gnss_request: geoLocationManager.ContinuousLocationRequest= {
     //高功耗定位
@@ -813,7 +883,7 @@ struct Index {
     }
   }
 
-  // 修改 selectGroup 方法 - 修复跳转
+  // 选择组别
   selectGroup(groupId: string, mhmId: string, mhmName: string, groupColor: string) {
     this.groupButtons = this.groupButtons.map(item => ({
       groupId: item.groupId,
@@ -841,12 +911,37 @@ struct Index {
 
   //监测时间3s，屏幕常量关闭
   aboutToAppear() {
+    this.pushPage('WindInterfaceBuilder')
+    notificationManager.requestEnableNotification();
+    startTimerNotification(1000); // 每 1 秒发送一次通知
+    // this.listenToScreen();
     this.check_test();
     this.mqttManager.setHost(user_url);
     this.requestPermissionAndStart();
     // this.loadLevels();
     this.startCheckTimer(3000);
     this.keepScreenOn(true);
+  }
+
+  async listenToScreen() {
+    let callback = (id: number) => {
+      let disp = display.getDisplayByIdSync(id);
+      console.info(`Display ${id} state changed : ${disp.state}`);
+    }
+
+    let displayClass: Array<display.Display> = [];
+    display.getAllDisplays((err: BusinessError, data: Array<display.Display>) => {
+      displayClass = data;
+      const errCode: number = err.code;
+      if (errCode) {
+        console.error(`Failed to obtain all the display objects. Code: ${err.code}, message: ${err.message}`);
+        return;
+      }
+      console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data)}`);
+    });
+
+    display.on('change', callback);
+    console.log(`start listen to screen change`)
   }
 
   //设置屏幕常亮
