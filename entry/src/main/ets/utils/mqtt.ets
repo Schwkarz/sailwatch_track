@@ -2,6 +2,21 @@ import { MqttClient, MqttConnectOptions, MqttMessage, MqttQos, MqttSubscribeOpti
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
 
+interface PendingMqttMessage {
+  topic: string;
+  payload: string;
+  qos: MqttQos;
+}
+
+interface MqttSubscription {
+  topic: string;
+  qos: MqttQos;
+}
+
+function formatErrorMessage(error: Error): string {
+  return error.message ? error.message : JSON.stringify(error);
+}
+
 export interface WindDataMessage {
   windSourceBoatCode: string;    // 风来源教练艇编号
   windSpeed: number;             // 平均风速 (cm/s,保留4位小数)
@@ -104,6 +119,10 @@ export class MqttManagement {
   private manualReconnect = true;   // 与 automaticReconnect 二选一
 
   private clientId: string = '';    //客户端ID
+  private readonly MAX_PENDING_MESSAGES: number = 500;
+  private readonly RECONNECT_DELAY_MS: number = 3000;
+  private pendingMessages: PendingMqttMessage[] = [];
+  private subscriptions: MqttSubscription[] = [];
 
   private windData: WindDataMessage = {
     windSourceBoatCode: 'null',
@@ -125,7 +144,7 @@ export class MqttManagement {
   private connectOptions: MqttConnectOptions = {
     // 建议：若使用手动重连则关闭自动重连
     automaticReconnect: false,              // ← 与手动重连二选一
-    connectTimeout: 30,
+    connectTimeout: 5,
     keepAliveInterval: 60,
     cleanSession: true,
     sslOptions: { enableServerCertAuth: true },
@@ -189,7 +208,9 @@ export class MqttManagement {
 
 
   async connect(): Promise<boolean> {
-    if (this.disposed || this.connecting) return false;
+    if (this.disposed) return false;
+    if (this.isConnected) return true;
+    if (this.connecting) return false;
     this.connecting = true;
     try {
       // 若已有旧实例但未完全断开，先清理
@@ -211,7 +232,7 @@ export class MqttManagement {
 
       // 拼接最终选项（避免重复设置 automaticReconnect）
       const finalOptions: MqttConnectOptions = {
-        connectTimeout: this.connectOptions.connectTimeout ?? 30,
+        connectTimeout: this.connectOptions.connectTimeout ?? 5,
         keepAliveInterval: this.connectOptions.keepAliveInterval ?? 60,
         cleanSession: this.connectOptions.cleanSession ?? true,
         sslOptions: { enableServerCertAuth: true },
@@ -223,15 +244,24 @@ export class MqttManagement {
       const response = await this.mqttClient.connect(finalOptions);
       console.info(`MQTT连接成功: ${JSON.stringify(response)}`);
       this.isConnected = true;
+      this.clearReconnectTimer();
+      await this.restoreSubscriptions();
+      await this.flushPendingMessages();
       return true;
     } catch (error) {
       console.error(`MQTT连接失败: ${JSON.stringify(error)}`);
       this.isConnected = false;
-      if (this.manualReconnect) this.scheduleReconnect();
       return false;
     } finally {
       this.connecting = false;
+      if (!this.isConnected && this.manualReconnect && !this.disposed) {
+        this.scheduleReconnect();
+      }
     }
+  }
+
+  public isConnecting(): boolean {
+    return this.connecting;
   }
 
   // 注销监听器（若 SDK 支持置空/移除；没有则用 disposed 标记短路）
@@ -261,21 +291,20 @@ export class MqttManagement {
   }
 
   private scheduleReconnect(): void {
-    console.log("scheduleReconnect")
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    // 若已经在连接或已销毁，不再重连
-    if (this.connecting || this.disposed) return;
+    if (this.reconnectTimer !== null || this.disposed || this.isConnected) return;
 
     this.reconnectTimer = setTimeout(() => {
-      if (this.disposed) return;
+      this.reconnectTimer = null;
+      if (this.disposed || this.isConnected) return;
+      if (this.connecting) {
+        this.scheduleReconnect();
+        return;
+      }
       console.info('尝试重新连接MQTT服务器...');
       this.connect().catch((err: Error) => {
         console.error('重连失败:', err);
       });
-    }, 5000);
+    }, this.RECONNECT_DELAY_MS);
   }
 
   /**
@@ -307,7 +336,9 @@ export class MqttManagement {
         console.error(`连接断开原因: ${err.message}`);
       }
       this.isConnected = false;
-      this.scheduleReconnect();
+      if (this.manualReconnect && !this.disposed) {
+        this.scheduleReconnect();
+      }
     });
 
     // 2. 消息到达回调 - 参数是 MqttMessage 类型
@@ -348,12 +379,12 @@ export class MqttManagement {
       const parsedData: WindDataMessage = JSON.parse(message) as WindDataMessage;
 
       // 验证必要字段是否存在
-      if (!parsedData.windSourceBoatCode ||
-        !parsedData.windSpeed ||
-        !parsedData.windDirection ||
-        !parsedData.longitude ||
-        !parsedData.latitude ||
-        !parsedData.ts) {
+      if (parsedData.windSourceBoatCode === undefined ||
+        parsedData.windSpeed === undefined ||
+        parsedData.windDirection === undefined ||
+        parsedData.longitude === undefined ||
+        parsedData.latitude === undefined ||
+        parsedData.ts === undefined) {
         console.warn('风数据消息缺少必要字段');
         return null;
       }
@@ -371,7 +402,7 @@ export class MqttManagement {
 
       return windData;
     } catch (error) {
-      console.error(`风数据消息解析失败: ${error.message}`);
+      console.error(`风数据消息解析失败: ${formatErrorMessage(error as Error)}`);
       return null;
     }
   }
@@ -397,7 +428,7 @@ export class MqttManagement {
       }
 
     } catch (error) {
-      console.error(`消息处理失败: ${error.message}`);
+      console.error(`消息处理失败: ${formatErrorMessage(error as Error)}`);
     }
 
   }
@@ -425,28 +456,101 @@ export class MqttManagement {
       `来源: ${data.windSourceBoatCode}`;
   }
 
-  async publish(topic: string, payload: string, qos: MqttQos = 1): Promise<void> {
+  async publish(topic: string, payload: string, qos: MqttQos = 1): Promise<boolean> {
+    const message: PendingMqttMessage = {
+      topic,
+      payload,
+      qos
+    };
+    const published = await this.publishDirect(message);
+    if (!published) {
+      this.enqueuePendingMessage(message);
+    }
+    return published;
+  }
+
+  private enqueuePendingMessage(message: PendingMqttMessage): void {
+    if (this.pendingMessages.length >= this.MAX_PENDING_MESSAGES) {
+      this.pendingMessages.shift();
+      console.warn('MQTT离线队列已满，丢弃最旧消息');
+    }
+    this.pendingMessages.push(message);
+    console.warn(`MQTT消息已进入离线队列，当前数量: ${this.pendingMessages.length}`);
+  }
+
+  private async publishDirect(message: PendingMqttMessage): Promise<boolean> {
     if (this.mqttClient && this.isConnected) {
       try {
         await this.mqttClient.publish({
-          topic: topic,
-          payload: payload,
-          qos: qos,
+          topic: message.topic,
+          payload: message.payload,
+          qos: message.qos,
         });
-        console.info(`消息已发布 [${topic}]: ${payload}`);
+        console.info(`消息已发布 [${message.topic}]: ${message.payload}`);
+        return true;
       } catch (err) {
         console.error(`发布失败: ${JSON.stringify(err)}`);
+        this.isConnected = false;
+        if (this.manualReconnect && !this.disposed) {
+          this.scheduleReconnect();
+        }
       }
+    }
+    return false;
+  }
+
+  private async flushPendingMessages(): Promise<void> {
+    while (this.pendingMessages.length > 0 && this.mqttClient && this.isConnected) {
+      const message = this.pendingMessages[0];
+      const published = await this.publishDirect(message);
+      if (!published) {
+        break;
+      }
+      this.pendingMessages.shift();
     }
   }
 
+  getPendingMessageCount(): number {
+    return this.pendingMessages.length;
+  }
+
   async subscribe(topic: string, qos: MqttQos = 1): Promise<void> {
+    this.rememberSubscription(topic, qos);
     if (this.mqttClient && this.isConnected) {
       try {
         await this.mqttClient.subscribe({ topic, qos });
         console.info(`已订阅: ${topic}`);
       } catch (err) {
         console.error(`订阅失败: ${JSON.stringify(err)}`);
+      }
+    }
+  }
+
+  private rememberSubscription(topic: string, qos: MqttQos): void {
+    for (let i: number = 0; i < this.subscriptions.length; i++) {
+      if (this.subscriptions[i].topic === topic) {
+        this.subscriptions[i].qos = qos;
+        return;
+      }
+    }
+    const subscription: MqttSubscription = {
+      topic: topic,
+      qos: qos
+    };
+    this.subscriptions.push(subscription);
+  }
+
+  private async restoreSubscriptions(): Promise<void> {
+    if (!this.mqttClient || !this.isConnected) {
+      return;
+    }
+    for (let i: number = 0; i < this.subscriptions.length; i++) {
+      const subscription: MqttSubscription = this.subscriptions[i];
+      try {
+        await this.mqttClient.subscribe({ topic: subscription.topic, qos: subscription.qos });
+        console.info(`已恢复订阅: ${subscription.topic}`);
+      } catch (error) {
+        console.error(`恢复订阅失败: ${formatErrorMessage(error as Error)}`);
       }
     }
   }
@@ -517,9 +621,8 @@ export async function get_level(tenantCode: number, is_test: boolean) : Promise<
     url = `https://sport.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/level?tenantCode=${tenantCode}`
   }
 
+  const httpRequest = http.createHttp();
   try{
-    const httpRequest = http.createHttp();
-
     const response = await httpRequest.request(
       url,
       {
@@ -532,11 +635,12 @@ export async function get_level(tenantCode: number, is_test: boolean) : Promise<
     const result = JSON.parse(String(response.result)) as level_rec;
     // console.log(JSON.stringify(result.data))
     // console.log(String(response.result));
-    httpRequest.destroy();
     return result;
   } catch (err) {
-    console.error(err.message)
+    console.error(formatErrorMessage(err as Error))
     return err_level
+  } finally {
+    httpRequest.destroy();
   }
 
 }
@@ -566,9 +670,8 @@ export async function get_group(levelId: string, is_test: boolean) : Promise<gro
   }
 
 
+  const httpRequest = http.createHttp();
   try{
-    const httpRequest = http.createHttp();
-
     const response = await httpRequest.request(
       url,
       {
@@ -581,11 +684,12 @@ export async function get_group(levelId: string, is_test: boolean) : Promise<gro
     const result = JSON.parse(String(response.result)) as group_rec;
     // console.log(JSON.stringify(result.data))
     // console.log(String(response.result));
-    httpRequest.destroy();
     return result;
   } catch (err) {
-    console.error(err.message)
+    console.error(formatErrorMessage(err as Error))
     return err_group
+  } finally {
+    httpRequest.destroy();
   }
 
 }
@@ -607,9 +711,8 @@ export async function get_group_test(levelId: string) : Promise<group_rec>{
     ]
   }
 
+  const httpRequest = http.createHttp();
   try{
-    const httpRequest = http.createHttp();
-
     const response = await httpRequest.request(
       `https://test.ironmanapi.com:8046/sailboat-api/basic/watch/sailboat/group?levelId=${levelId}`,
       {
@@ -622,11 +725,12 @@ export async function get_group_test(levelId: string) : Promise<group_rec>{
     const result = JSON.parse(String(response.result)) as group_rec;
     // console.log(JSON.stringify(result.data))
     // console.log(String(response.result));
-    httpRequest.destroy();
     return result;
   } catch (err) {
-    console.error(err.message)
+    console.error(formatErrorMessage(err as Error))
     return err_group
+  } finally {
+    httpRequest.destroy();
   }
 
 }

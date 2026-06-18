@@ -1,7 +1,14 @@
 import { ble } from '@kit.ConnectivityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
-const device_name: string = "WT901BLE90";
+const WT901_DEVICE_PREFIX: string = "WT901";
+
+export interface BleDeviceItem {
+  deviceId: string;
+  deviceName: string;
+  rssi: number;
+  lastSeen: number;
+}
 
 interface acceleration {
   x : number;
@@ -41,6 +48,27 @@ export class BleManagement {
   private last1sData: wt_SensorData[] = [];
 
   private isScanning: boolean = false;
+  private selectedDeviceId: string = "";
+  private selectedDeviceName: string = "";
+  private discoveredDevices: BleDeviceItem[] = [];
+  private deviceDiscoveryUpdate: ((devices: BleDeviceItem[]) => void) | null = null;
+  private isDeviceFindListenerRegistered: boolean = false;
+  private deviceFindCallback: (scanResults: ble.ScanResult[]) => void = (scanResults: ble.ScanResult[]) => {
+    try {
+      this.printBLE(scanResults);
+    } catch (error) {
+      const scanError: BusinessError = error as BusinessError;
+      console.error(`处理蓝牙扫描结果失败: code=${scanError.code}, message=${scanError.message}`);
+    }
+  };
+  private connectionStateCallback: (state: ble.BLEConnectionChangeState) => void = (state: ble.BLEConnectionChangeState) => {
+    try {
+      this.confirmConnect(state);
+    } catch (error) {
+      console.error(`处理蓝牙连接状态失败: ${JSON.stringify(error)}`);
+    }
+  };
+  private characteristicChangeCallback: ((changedChar: ble.BLECharacteristic) => void) | null = null;
 
   public ble_sensorData: wt_SensorData = {
     header : 0,
@@ -79,7 +107,16 @@ export class BleManagement {
   }
 
   // 新增：断开连接回调函数
+  private onConnectCallback: (() => void) | null = null;
   private onDisconnectCallback: (() => void) | null = null;
+
+  public setOnConnectCallback(callback: () => void): void {
+    this.onConnectCallback = callback;
+  }
+
+  public clearOnConnectCallback(): void {
+    this.onConnectCallback = null;
+  }
 
   // 设置断开连接回调
   public setOnDisconnectCallback(callback: () => void): void {
@@ -91,12 +128,53 @@ export class BleManagement {
     this.onDisconnectCallback = null;
   }
 
+  public setDeviceDiscoveryCallback(callback: (devices: BleDeviceItem[]) => void): void {
+    this.deviceDiscoveryUpdate = callback;
+  }
+
+  public clearDeviceDiscoveryCallback(): void {
+    this.deviceDiscoveryUpdate = null;
+  }
+
+  public hasSelectedDevice(): boolean {
+    return this.selectedDeviceId.length > 0;
+  }
+
+  public getSelectedDeviceId(): string {
+    return this.selectedDeviceId;
+  }
+
+  public getSelectedDeviceName(): string {
+    return this.selectedDeviceName;
+  }
+
+  public selectDevice(deviceId: string, deviceName: string): void {
+    this.selectedDeviceId = deviceId;
+    this.selectedDeviceName = deviceName;
+  }
+
+  public connectDevice(deviceId: string, deviceName: string): boolean {
+    this.selectDevice(deviceId, deviceName);
+    this.stopScan();
+    return this.tryConnect(deviceId);
+  }
+
+  public connectSelectedDevice(): boolean {
+    if (this.selectedDeviceId.length === 0 || this.connectedDevice) {
+      return this.connectedDevice !== null;
+    }
+    return this.tryConnect(this.selectedDeviceId);
+  }
+
   // 修改 confirmConnect 方法
   private confirmConnect(state: ble.BLEConnectionChangeState): void {
     if (state.state === 2) { // 2 表示已连接
       console.log('connected');
       this.readData();
       this.isScanning = false;
+      if (this.onConnectCallback) {
+        this.onConnectCallback();
+      }
     } else if (state.state === 0) { // 0 表示断开连接
       console.log('disconnected');
       this.handleDisconnection();
@@ -118,35 +196,63 @@ export class BleManagement {
   }
 
   async checkDeviceName(): Promise<boolean> {
+    if (!this.connectedDevice) {
+      return false;
+    }
     try {
       const name: string | undefined = await this.connectedDevice?.getDeviceName();
       if(!name){
-        return false;
+        return this.selectedDeviceId.length > 0;
       }
       console.log(`getDeviceName: ${name}`);
 
       // 与普通字符串比较
-      if (name === device_name) {
+      if (this.selectedDeviceName.length > 0 && name === this.selectedDeviceName) {
         return true;
-      } else {
-        return false;
       }
+      return name.toUpperCase().startsWith(WT901_DEVICE_PREFIX);
     } catch (error) {
       console.error("Error getting device name:", error);
-      return false;
+      return this.selectedDeviceId.length > 0;
     }
   }
 
   public checkDevice(): void {
-    if(!this.isScanning){
-      this.isScanning = true;
-      console.log("start scan");
-      ble.on('BLEDeviceFind', this.printBLE.bind(this));
-      let scanFilter: ble.ScanFilter = {
-        name: device_name,
-      };
-      ble.startBLEScan([scanFilter]);
+    if (this.hasSelectedDevice()) {
+      this.connectSelectedDevice();
+      return;
     }
+    this.startWt901DeviceScan();
+  }
+
+  public startWt901DeviceScan(): boolean {
+    if (this.isScanning) {
+      return true;
+    }
+
+    this.disposed = false;
+    this.discoveredDevices = [];
+    console.log("start scan wt901 devices");
+
+    try {
+      if (!this.isDeviceFindListenerRegistered) {
+        ble.on('BLEDeviceFind', this.deviceFindCallback);
+        this.isDeviceFindListenerRegistered = true;
+      }
+      // SDK 要求无系统过滤条件时传 null；空数组会在部分手表上抛出 401。
+      ble.startBLEScan(null);
+      this.isScanning = true;
+      return true;
+    } catch (error) {
+      console.error(`启动蓝牙扫描失败: ${JSON.stringify(error)}`);
+      this.isScanning = false;
+      this.removeDeviceFindListener();
+      return false;
+    }
+  }
+
+  public stopDeviceScan(): void {
+    this.stopScan();
   }
 
   //获取最近1s的数据并清空
@@ -157,16 +263,98 @@ export class BleManagement {
   }
 
   private printBLE(scanResults: ble.ScanResult[]): void {
-    console.log(JSON.stringify(scanResults[0]));
-    let result = scanResults[0];
-    this.tryConnect(scanResults[0].deviceId);
+    if (!scanResults || scanResults.length === 0) {
+      return;
+    }
+    for (let i: number = 0; i < scanResults.length; i++) {
+      const item: ble.ScanResult = scanResults[i];
+      try {
+        const deviceName: string = item.deviceName ? item.deviceName.trim() : "";
+        if (deviceName.length === 0 || !deviceName.toUpperCase().startsWith(WT901_DEVICE_PREFIX)) {
+          continue;
+        }
+        const discovered: BleDeviceItem = {
+          deviceId: item.deviceId,
+          deviceName: deviceName,
+          rssi: item.rssi,
+          lastSeen: Date.now()
+        };
+        this.upsertDiscoveredDevice(discovered);
+      } catch (error) {
+        const itemError: BusinessError = error as BusinessError;
+        console.error(`跳过异常蓝牙广播: deviceId=${item.deviceId}, code=${itemError.code}, message=${itemError.message}`);
+      }
+    }
   }
 
-  private tryConnect(deviceID: string): void {
+  private tryConnect(deviceID: string): boolean {
     console.log('try connect');
-    this.connectedDevice = ble.createGattClientDevice(deviceID);
-    this.connectedDevice.on('BLEConnectionStateChange', this.confirmConnect.bind(this));
-    this.connectedDevice.connect();
+    try {
+      if (this.connectedDevice) {
+        try {
+          this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);
+          this.connectedDevice.disconnect();
+        } catch (error) {
+          console.error(`清理旧蓝牙连接失败: ${JSON.stringify(error)}`);
+        }
+        this.connectedDevice = null;
+      }
+      this.connectedDevice = ble.createGattClientDevice(deviceID);
+      this.connectedDevice.on('BLEConnectionStateChange', this.connectionStateCallback);
+      this.connectedDevice.connect();
+      return true;
+    } catch (error) {
+      console.error(`连接蓝牙设备失败: ${JSON.stringify(error)}`);
+      if (this.connectedDevice) {
+        try {
+          this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);
+        } catch (offError) {
+          console.error(`移除蓝牙连接监听失败: ${JSON.stringify(offError)}`);
+        }
+      }
+      this.connectedDevice = null;
+      return false;
+    }
+  }
+
+  private upsertDiscoveredDevice(device: BleDeviceItem): void {
+    let updated: boolean = false;
+    const devices: BleDeviceItem[] = [];
+    for (let i: number = 0; i < this.discoveredDevices.length; i++) {
+      const oldItem: BleDeviceItem = this.discoveredDevices[i];
+      if (oldItem.deviceId === device.deviceId) {
+        devices.push(device);
+        updated = true;
+      } else {
+        devices.push(oldItem);
+      }
+    }
+    if (!updated) {
+      devices.push(device);
+    }
+    this.discoveredDevices = devices;
+    this.notifyDeviceDiscovery();
+  }
+
+  private copyDiscoveredDevices(): BleDeviceItem[] {
+    const devices: BleDeviceItem[] = [];
+    for (let i: number = 0; i < this.discoveredDevices.length; i++) {
+      const item: BleDeviceItem = this.discoveredDevices[i];
+      const copy: BleDeviceItem = {
+        deviceId: item.deviceId,
+        deviceName: item.deviceName,
+        rssi: item.rssi,
+        lastSeen: item.lastSeen
+      };
+      devices.push(copy);
+    }
+    return devices;
+  }
+
+  private notifyDeviceDiscovery(): void {
+    if (this.deviceDiscoveryUpdate) {
+      this.deviceDiscoveryUpdate(this.copyDiscoveredDevices());
+    }
   }
 
   // 实现读取数据的核心方法
@@ -224,18 +412,22 @@ export class BleManagement {
 
         console.log('Notifications enabled');
 
-        // 5. 订阅特征变化事件
-        this.connectedDevice!.on('BLECharacteristicChange', (changedChar: ble.BLECharacteristic) => {
+        this.characteristicChangeCallback = (changedChar: ble.BLECharacteristic) => {
           if (changedChar.characteristicUuid === characteristic.characteristicUuid) {
             this.handleReceivedData(changedChar.characteristicValue);
           }
-        });
+        };
+        this.connectedDevice!.off('BLECharacteristicChange');
+        this.connectedDevice!.on('BLECharacteristicChange', this.characteristicChangeCallback);
       }
     );
   }
 
   // 处理接收到的数据
   private handleReceivedData(data: ArrayBuffer): void {
+    if (data.byteLength === 0) {
+      return;
+    }
     // 将ArrayBuffer转换为可操作的数据视图
     const dataView = new DataView(data);
 
@@ -309,8 +501,8 @@ export class BleManagement {
     }
 
     // 检查数据包长度和包头
-    if (values.length < 19) {
-      console.error('数据包长度不足，期望至少19字节，实际收到:', values.length);
+    if (values.length < 20) {
+      console.error('数据包长度不足，期望至少20字节，实际收到:', values.length);
       return null_data;
     }
 
@@ -436,12 +628,46 @@ export class BleManagement {
   // 断开连接和清理
   public disconnect(): void {
     this.disposed = true;
+    this.stopScan();
     if (this.connectedDevice) {
-      this.connectedDevice.off('BLEConnectionStateChange', this.confirmConnect);
-      this.connectedDevice.off('BLECharacteristicChange');
-      this.connectedDevice.disconnect();
+      try {
+        this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);
+        if (this.characteristicChangeCallback) {
+          this.connectedDevice.off('BLECharacteristicChange', this.characteristicChangeCallback);
+          this.characteristicChangeCallback = null;
+        } else {
+          this.connectedDevice.off('BLECharacteristicChange');
+        }
+        this.connectedDevice.disconnect();
+      } catch (error) {
+        console.error(`断开蓝牙设备失败: ${JSON.stringify(error)}`);
+      }
       this.connectedDevice = null;
     }
+  }
+
+  private stopScan(): void {
+    if (this.isScanning) {
+      try {
+        ble.stopBLEScan();
+      } catch (error) {
+        console.error(`停止蓝牙扫描失败: ${JSON.stringify(error)}`);
+      }
+      this.isScanning = false;
+    }
+    this.removeDeviceFindListener();
+  }
+
+  private removeDeviceFindListener(): void {
+    if (!this.isDeviceFindListenerRegistered) {
+      return;
+    }
+    try {
+      ble.off('BLEDeviceFind', this.deviceFindCallback);
+    } catch (error) {
+      console.error(`移除蓝牙扫描监听失败: ${JSON.stringify(error)}`);
+    }
+    this.isDeviceFindListenerRegistered = false;
   }
 
 }

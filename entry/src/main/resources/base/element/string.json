@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "sailwatch_track"
+    },
+    {
+      "name": "app_name",
+      "value": "sailwatch_track"
     }
   ]
 }

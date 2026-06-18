@@ -5,13 +5,19 @@ import window from '@ohos.window';
 import { geoLocationManager } from '@kit.LocationKit';
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
-import { promptAction, ShowDialogSuccessResponse, display } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { notificationManager } from '@kit.NotificationKit'
 
-import {BleManagement, wt_SensorData} from '../utils/bluetoothManage'
+import {BleManagement, wt_SensorData, BleDeviceItem} from '../utils/bluetoothManage'
 import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data, WindDataMessage} from '../utils/mqtt'
-import {DataUploader} from '../utils/updataloader'
-import { data } from '@kit.TelephonyKit';
+import {DataUploader, UploadData, ble_SensorData} from '../utils/updataloader'
+import {
+  OfflineTrainingStore,
+  OfflineRawSample,
+  OfflineImuSample,
+  TrainingReport,
+  TrainingReportIndexItem
+} from '../utils/offlineTrainingStore'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -49,8 +55,12 @@ let location_change: number = 0;
 //gps定时器
 let gpsTimer: number | undefined = undefined;
 
-let last_wind: WindDataMessage;
-let last_last_wind: WindDataMessage;
+let last_wind: WindDataMessage | undefined = undefined;
+let last_last_wind: WindDataMessage | undefined = undefined;
+
+const APP_MODE_UNSELECTED: number = 0;
+const APP_MODE_SERVER: number = 1;
+const APP_MODE_OFFLINE: number = 2;
 
 
 // 在接口定义部分添加新的状态类型
@@ -68,37 +78,6 @@ interface GroupButton {
   color: string;
 }
 
-//上传服务器数据内容格式
-interface UploadData {
-  heartRate: number;
-  location: number[];    // [经度, 纬度]
-  speed: number;
-  sensorData: number[];  // [x, y, z] 加速度
-  timestamp: number;     // 添加时间戳
-  lag_time: number;
-  gps_change: number;
-  ble_SensorData: ble_SensorData;
-}
-
-// 上传数据格式（带校验）
-interface UploadData_check {
-  uploaddata: UploadData;
-  check: number;
-}
-
-// 服务器发回数据格式
-interface ServerResponse {
-  status: string;
-  message: string;
-  received_data: UploadData;
-}
-
-// 上传接口
-interface IUploadResult {
-  success: boolean;
-  error?: string;  // 可选字段
-}
-
 // 数据容量测试结果类型
 interface ITestResult {
   success: boolean;
@@ -112,55 +91,16 @@ interface uploadCap {
   timestamp: number;
 }
 
-interface acceleration {
-  x : number;
-  y : number;
-  z : number;
+interface ChartBar {
+  id: string;
+  height: number;
+  value: number;
 }
 
-interface angularVelocity {
-  x : number;
-  y : number;
-  z : number;
-}
-
-interface angle {
-  roll : number;
-  pitch : number;
-  yaw : number;
-}
-
-interface ble_SensorData {
-  header: number;          // 数据包头 0x55
-  flag: number;            // 标志位 0x61
-  acceleration: acceleration;         // 加速度 (单位: m/s^2)
-  angularVelocity: angularVelocity;   // 角速度 (单位: °/s)
-  angle: angle;            // 角度 (单位: °)
-  rawData: number[];       // 原始数据数组
-  timestamp: number;       // 解析时间戳
-}
-
-
-
-function uploadDataToString(data: UploadData): string {
-  // 按固定顺序拼接所有字段
-  return [
-    data.heartRate.toString(),
-    data.location.join(','),
-    data.speed.toString(),
-    data.sensorData.join(','),
-    data.timestamp.toString(),
-  // data.lag_time.toString() // 新增字段
-  ].join('|'); // 使用 | 分隔不同字段
-}
-
-// 异或校验
-function xorChecksum(str: string): number {
-  let checksum = 0;
-  for (let i = 0; i < str.length; i++) {
-    checksum ^= str.charCodeAt(i);
-  }
-  return checksum & 0xFF; // 返回单字节校验值 (0-255)
+interface PlotPoint {
+  id: string;
+  x: number;
+  y: number;
 }
 
 // 数据生成工具（手表端）
@@ -204,14 +144,15 @@ function sendNotification() {
             console.info("通知已自动取消");
           }
         });
-      }, 1000);
+      }, 200);
     }
   });
 }
 
-// 定义一个定时器，每隔 10 秒发送一次通知
-function startTimerNotification(interval: number = 10000) {
-  setInterval(() => {
+// 定义一个定时器，每隔 1 秒检查一次屏幕状态
+function startTimerNotification(interval: number = 1000): number {
+  return setInterval(() => {
+    // console.log("notification catch started")
     display.getAllDisplays((err: BusinessError, data: Array<display.Display>) => {
       const errCode: number = err.code;
       if (errCode) {
@@ -224,6 +165,7 @@ function startTimerNotification(interval: number = 10000) {
         }
       }else {
         console.error('no displaydata')
+        return;
       }
       console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data[0].state)}`);
     });
@@ -233,6 +175,14 @@ function startTimerNotification(interval: number = 10000) {
 
   }, interval);
 }
+
+let requestEnableNotificationCallback = (err: BusinessError): void => {
+  if (err) {
+    console.error(`requestEnableNotification failed, code is ${err.code}, message is ${err.message}`);
+  } else {
+    console.info(`requestEnableNotification success`);
+  }
+};
 
 @Entry
 @Component
@@ -267,6 +217,7 @@ struct Index {
   @State checkTimer: number | undefined = undefined;
   //Mqtt上传定时器
   @State MqttTimer: number | undefined = undefined;
+  @State notificationTimer: number | undefined = undefined;
 
   @State sensorInterval: number = 50000000; //加速度传感器读取间隔 ns
   @State heartInterval: number = 1000000000; //心率读取间隔 ns
@@ -305,10 +256,48 @@ struct Index {
 
   @State button_size: number = 60;
 
+  @State appMode: number = APP_MODE_UNSELECTED;
+  @State bleDevices: BleDeviceItem[] = [];
+  @State isBleScanning: boolean = false;
+  @State selectedBleDeviceName: string = '';
+  @State selectedBleDeviceId: string = '';
+  @State bleScanStatus: string = '未扫描';
+  @State isPermissionRequestCompleted: boolean = false;
+  @State hasBluetoothPermission: boolean = false;
+
+  @State isOfflineRecording: boolean = false;
+  @State offlineButtonString: string = '开始';
+  @State offlineSampleCount: number = 0;
+  @State offlineElapsedSeconds: number = 0;
+  @State offlineStatus: string = '未开始';
+  @State offlineRecordTimer: number | undefined = undefined;
+  @State offlineLongPressTimer: number | undefined = undefined;
+  @State isOfflineLongPressing: boolean = false;
+  @State offlineLongPressProgress: number = 0;
+  @State offlineReports: TrainingReportIndexItem[] = [];
+  @State selectedReport: TrainingReport | null = null;
+
+  offlineStore: OfflineTrainingStore = new OfflineTrainingStore();
+  private hasSetupBleCallbacks: boolean = false;
+  private isBleSelectionVisible: boolean = false;
+  private offlineStartedAt: number = 0;
+  private offlineLongPressDuration: number = 2000;
+  private offlineStopCompletedByLongPress: boolean = false;
+
 
   @Builder
   PagesMap(name: string) {
-    if (name == 'WindInterfaceBuilder') {
+    if (name == 'ModeSelection') {
+      this.modeSelectionBuilder('ModeSelection')
+    }else if (name == 'BleDeviceSelection') {
+      this.bleDeviceSelectionBuilder('BleDeviceSelection')
+    }else if (name == 'OfflineInterface') {
+      this.offlineInterfaceBuilder('OfflineInterface')
+    }else if (name == 'OfflineHistory') {
+      this.offlineHistoryBuilder('OfflineHistory')
+    }else if (name == 'OfflineReportDetail') {
+      this.offlineReportDetailBuilder('OfflineReportDetail')
+    }else if (name == 'WindInterfaceBuilder') {
       this.WindInterfaceBuilder('WindInterfaceBuilder');
     }else if(name == 'LevelSelection'){
       this.levelSelectionBuilder('LevelSelection');
@@ -343,6 +332,132 @@ struct Index {
     this.pageStack.pop();
   }
 
+  private getAbilityContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext;
+  }
+
+  private setupBleCallbacks(): void {
+    if (this.hasSetupBleCallbacks) {
+      return;
+    }
+    this.hasSetupBleCallbacks = true;
+    this.wtBLE.setDeviceDiscoveryCallback((devices: BleDeviceItem[]) => {
+      this.bleDevices = devices;
+      if (devices.length === 0) {
+        this.bleScanStatus = this.isBleScanning ? '正在搜索 WT901' : '未发现设备';
+      } else {
+        this.bleScanStatus = `发现 ${devices.length} 个 WT901`;
+      }
+    });
+    this.wtBLE.setOnConnectCallback(() => {
+      this.isbleConnected = true;
+      this.bleconnectionStatusColor = Color.Green;
+      this.isBleScanning = false;
+      this.bleScanStatus = '已连接';
+    });
+    this.wtBLE.setOnDisconnectCallback(() => {
+      this.isbleConnected = false;
+      this.bleconnectionStatusColor = Color.Red;
+      this.bleScanStatus = '已断开';
+    });
+  }
+
+  selectServerMode(): void {
+    this.appMode = APP_MODE_SERVER;
+    this.pushPage('WindInterfaceBuilder');
+  }
+
+  selectOfflineMode(): void {
+    this.appMode = APP_MODE_OFFLINE;
+    windBoatsource = -1;
+    this.pushPage('BleDeviceSelection');
+  }
+
+  startBleDeviceScan(): void {
+    this.setupBleCallbacks();
+    if (!this.isPermissionRequestCompleted) {
+      this.isBleScanning = false;
+      this.bleScanStatus = '等待蓝牙权限';
+      return;
+    }
+    if (!this.hasBluetoothPermission) {
+      this.isBleScanning = false;
+      this.bleScanStatus = '未获得蓝牙权限';
+      return;
+    }
+    this.bleDevices = [];
+    this.bleScanStatus = '正在搜索 WT901';
+    this.isBleScanning = this.wtBLE.startWt901DeviceScan();
+    if (!this.isBleScanning) {
+      this.bleScanStatus = '扫描失败，请检查蓝牙';
+    }
+  }
+
+  stopBleDeviceScan(): void {
+    this.wtBLE.stopDeviceScan();
+    this.isBleScanning = false;
+    this.bleScanStatus = this.bleDevices.length > 0 ? `发现 ${this.bleDevices.length} 个 WT901` : '已停止';
+  }
+
+  selectBleDevice(item: BleDeviceItem): void {
+    this.selectedBleDeviceId = item.deviceId;
+    this.selectedBleDeviceName = item.deviceName;
+    this.bleScanStatus = `连接 ${item.deviceName}`;
+    this.isBleScanning = false;
+    const connecting: boolean = this.wtBLE.connectDevice(item.deviceId, item.deviceName);
+    if (!connecting) {
+      this.bleScanStatus = '连接失败，请重试';
+    }
+  }
+
+  onBleSelectionAppear(): void {
+    this.isBleSelectionVisible = true;
+    this.startBleDeviceScan();
+  }
+
+  onBleSelectionDisappear(): void {
+    this.isBleSelectionVisible = false;
+    this.stopBleDeviceScan();
+  }
+
+  enterAfterBleSelected(): void {
+    if (this.selectedBleDeviceId.length === 0) {
+      return;
+    }
+    this.stopBleDeviceScan();
+    if (this.appMode === APP_MODE_SERVER) {
+      this.pushPage('LoadInterface');
+      this.connectWatchMqtt();
+    } else if (this.appMode === APP_MODE_OFFLINE) {
+      this.pushPage('OfflineInterface');
+    }
+  }
+
+  openOfflineHistory(): void {
+    if (this.isOfflineRecording) {
+      return;
+    }
+    this.refreshOfflineReports();
+    this.pushPage('OfflineHistory');
+  }
+
+  refreshOfflineReports(): void {
+    try {
+      this.offlineReports = this.offlineStore.listReports();
+    } catch (error) {
+      console.error(`刷新离线报告失败: ${JSON.stringify(error)}`);
+      this.offlineReports = [];
+    }
+  }
+
+  openOfflineReport(id: string): void {
+    const report: TrainingReport | null = this.offlineStore.readReport(id);
+    if (report) {
+      this.selectedReport = report;
+      this.pushPage('OfflineReportDetail');
+    }
+  }
+
   @Builder
   testBuilder(name: string) {
     Column(){
@@ -353,6 +468,387 @@ struct Index {
     .height('100%') // 让 Column 占满父容器
     .backgroundColor(Color.White)
     .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  modeSelectionBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('训练模式')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .margin({ bottom: 20 })
+
+        Button('连接服务器')
+          .fontSize(16)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x317aff)
+          .fontColor(Color.White)
+          .width(150)
+          .height(46)
+          .margin({ bottom: 14 })
+          .onClick(() => this.selectServerMode())
+
+        Button('离线模式')
+          .fontSize(16)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x2f9b67)
+          .fontColor(Color.White)
+          .width(150)
+          .height(46)
+          .margin({ bottom: 14 })
+          .onClick(() => this.selectOfflineMode())
+
+        Button('历史报告')
+          .fontSize(14)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x555555)
+          .fontColor(Color.White)
+          .width(120)
+          .height(38)
+          .onClick(() => this.openOfflineHistory())
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => true)
+  }
+
+  @Builder
+  bleDeviceSelectionBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('选择姿态传感器')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .margin({ top: 2, bottom: 3 })
+
+        Text(this.bleScanStatus)
+          .fontSize(10)
+          .fontColor(Color.Gray)
+          .margin({ bottom: 4 })
+
+        Row() {
+          Button(this.isBleScanning ? '扫描中' : '扫描')
+            .fontSize(11)
+            .type(ButtonType.Capsule)
+            .backgroundColor(0x317aff)
+            .fontColor(Color.White)
+            .width(76)
+            .height(28)
+            .margin({ right: 6 })
+            .onClick(() => this.startBleDeviceScan())
+
+          Button('停止')
+            .fontSize(11)
+            .type(ButtonType.Capsule)
+            .backgroundColor(0x555555)
+            .fontColor(Color.White)
+            .width(62)
+            .height(28)
+            .onClick(() => this.stopBleDeviceScan())
+        }
+        .margin({ bottom: 4 })
+
+        Column() {
+          if (this.bleDevices.length === 0) {
+            Text('暂无 WT901 设备')
+              .fontSize(11)
+              .fontColor(Color.Gray)
+              .margin({ top: 16 })
+          } else {
+            Scroll() {
+              Column() {
+                ForEach(this.bleDevices, (item: BleDeviceItem) => {
+                  Column() {
+                    Text(item.deviceName)
+                      .fontSize(12)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(Color.White)
+                      .maxLines(1)
+                    Text(item.deviceId)
+                      .fontSize(8)
+                      .fontColor(Color.Gray)
+                      .maxLines(1)
+                    Text(`RSSI ${item.rssi}`)
+                      .fontSize(8)
+                      .fontColor(0x9fc7ff)
+                  }
+                  .width('90%')
+                  .height(48)
+                  .justifyContent(FlexAlign.Center)
+                  .alignItems(HorizontalAlign.Center)
+                  .backgroundColor(item.deviceId === this.selectedBleDeviceId ? 0x245f9e : 0x222222)
+                  .borderRadius(6)
+                  .margin({ bottom: 5 })
+                  .onClick(() => this.selectBleDevice(item))
+                })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Center)
+            }
+            .width('100%')
+            .height('100%')
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+
+        Button(this.selectedBleDeviceId.length > 0 ? '进入' : '请选择')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.selectedBleDeviceId.length > 0 ? 0x2f9b67 : 0x555555)
+          .fontColor(Color.White)
+          .width(104)
+          .height(34)
+          .margin({ top: 4, bottom: 2 })
+          .onClick(() => this.enterAfterBleSelected())
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: 6, bottom: 8, left: 10, right: 10 })
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onAppear(() => this.onBleSelectionAppear())
+    .onDisAppear(() => this.onBleSelectionDisappear())
+    .onBackPressed(() => {
+      this.stopBleDeviceScan();
+      this.popPage();
+      return true;
+    })
+  }
+
+  @Builder
+  offlineInterfaceBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('离线模式')
+          .fontSize(8)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(0x333333)
+          .margin({ bottom: 5 })
+
+        Button('历史记录')
+          .fontSize(10)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.isOfflineRecording ? 0x333333 : 0x555555)
+          .fontColor(Color.White)
+          .width(72)
+          .height(25)
+          .enabled(!this.isOfflineRecording)
+          .opacity(this.isOfflineRecording ? 0.45 : 1)
+          .onClick(() => this.openOfflineHistory())
+
+        Text(`${(this.speed * 1.94).toFixed(1)}`)
+          .fontSize(80)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .textAlign(TextAlign.Center)
+
+        Text(formatDuration(this.offlineElapsedSeconds))
+          .fontSize(12)
+          .fontColor(Color.White)
+          .margin({ bottom: 5 })
+
+        Stack() {
+          Button(this.isOfflineRecording ? '长按停止' : '开始记录')
+            .fontSize(14)
+            .type(ButtonType.Capsule)
+            .backgroundColor(this.isOfflineRecording ? 0xd64c4c : 0x2f9b67)
+            .fontColor(Color.White)
+            .width(100)
+            .height(35)
+            .onClick(() => this.onOfflineButtonClick())
+            .onTouch((event: TouchEvent) => {
+              if (event.type === TouchType.Down) {
+                if (this.isOfflineRecording) {
+                  this.startOfflineLongPressDetection();
+                } else {
+                  this.offlineStopCompletedByLongPress = false;
+                }
+              } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                this.stopOfflineLongPressDetection();
+              }
+            })
+
+          if (this.isOfflineLongPressing && this.isOfflineRecording) {
+            Progress({ value: this.offlineLongPressProgress, total: 100, type: ProgressType.Ring })
+              .width(35)
+              .height(35)
+              .color(Color.Red)
+              .backgroundColor(0x00000000)
+          }
+        }
+        .width(126)
+        .height(44)
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => true)
+  }
+
+  @Builder
+  offlineHistoryBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('历史报告')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .margin({ top: 12, bottom: 10 })
+
+        if (this.offlineReports.length === 0) {
+          Text('暂无报告')
+            .fontSize(14)
+            .fontColor(Color.Gray)
+            .margin({ top: 30 })
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.offlineReports, (item: TrainingReportIndexItem) => {
+                Column() {
+                  Text(formatShortDateTime(item.startedAt))
+                    .fontSize(13)
+                    .fontColor(Color.White)
+                    .maxLines(1)
+                  Text(`${formatDuration(item.durationSec)}  均心 ${item.averageHeartRate}`)
+                    .fontSize(11)
+                    .fontColor(Color.Gray)
+                }
+                .width('92%')
+                .height(52)
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+                .backgroundColor(0x222222)
+                .borderRadius(8)
+                .margin({ bottom: 8 })
+                .onClick(() => this.openOfflineReport(item.id))
+              })
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+          }
+          .width('100%')
+          .height('74%')
+        }
+
+        Button('返回')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x555555)
+          .fontColor(Color.White)
+          .width(80)
+          .height(34)
+          .onClick(() => this.popPage())
+      }
+      .width('100%')
+      .height('100%')
+      .padding(12)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onAppear(() => this.refreshOfflineReports())
+    .onBackPressed(() => {
+      this.popPage();
+      return true;
+    })
+  }
+
+  @Builder
+  offlineReportDetailBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        if (this.selectedReport === null) {
+          Text('报告不存在')
+            .fontSize(16)
+            .fontColor(Color.White)
+        } else {
+          Text(this.getSelectedReportDateText())
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Color.White)
+            .margin({ top: 8, bottom: 6 })
+
+          Text(this.getSelectedReportSummaryText())
+            .fontSize(11)
+            .fontColor(Color.Gray)
+            .margin({ bottom: 4 })
+
+          Text(this.getSelectedReportHeartText())
+            .fontSize(11)
+            .fontColor(Color.Gray)
+            .margin({ bottom: 6 })
+
+          Row() {
+            ForEach(this.buildHeartBars(this.selectedReport), (bar: ChartBar) => {
+              Text('')
+                .width(3)
+                .height(bar.height)
+                .backgroundColor(0xff6b6b)
+                .margin({ right: 1 })
+            })
+          }
+          .height(64)
+          .width('92%')
+          .alignItems(VerticalAlign.Bottom)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(0x181818)
+          .borderRadius(8)
+          .margin({ bottom: 8 })
+
+          Stack() {
+            ForEach(this.buildGpsPoints(this.selectedReport), (point: PlotPoint) => {
+              Circle()
+                .width(4)
+                .height(4)
+                .fill(0x4bc0ff)
+                .position({ x: point.x, y: point.y })
+            })
+          }
+          .width(150)
+          .height(86)
+          .backgroundColor(0x181818)
+          .borderRadius(8)
+          .margin({ bottom: 8 })
+
+          Text(this.getSelectedReportDistanceText())
+            .fontSize(11)
+            .fontColor(Color.Gray)
+            .margin({ bottom: 6 })
+        }
+
+        Button('返回')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x555555)
+          .fontColor(Color.White)
+          .width(80)
+          .height(32)
+          .onClick(() => this.popPage())
+      }
+      .width('100%')
+      .height('100%')
+      .padding(10)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      this.popPage();
+      return true;
+    })
   }
 
   // 风源选择页面
@@ -563,7 +1059,7 @@ struct Index {
 
         // 速度显示
         Text(`${(this.speed * 1.94).toFixed(1)}`)
-          .fontSize(80) // 稍微调小字体
+          .fontSize(80)
           .fontWeight(FontWeight.Medium)
           .fontColor(Color.White)
           .textAlign(TextAlign.Center)
@@ -719,12 +1215,235 @@ struct Index {
 
       if (!this.isStartUpload) {
         //不在上传状态中
-        // this.connectWatchMqtt();
-        this.startMqttSend();
         this.isStartUpload = true;
         this.buttonString = '停止';
+        this.connectWatchMqtt();
+        this.startMqttSend();
       }
     }
+  }
+
+  onOfflineButtonClick(): void {
+    if (this.offlineStopCompletedByLongPress) {
+      this.offlineStopCompletedByLongPress = false;
+      return;
+    }
+    if (this.isOfflineRecording) {
+      return;
+    }
+    this.startOfflineRecording();
+  }
+
+  startOfflineLongPressDetection(): void {
+    if (!this.isOfflineRecording || this.isOfflineLongPressing) {
+      return;
+    }
+    this.stopOfflineLongPressDetection();
+    this.isOfflineLongPressing = true;
+    this.offlineLongPressProgress = 0;
+    const startTime: number = Date.now();
+    this.offlineLongPressTimer = setInterval(() => {
+      const elapsed: number = Date.now() - startTime;
+      this.offlineLongPressProgress = Math.min((elapsed / this.offlineLongPressDuration) * 100, 100);
+      if (elapsed >= this.offlineLongPressDuration) {
+        this.offlineStopCompletedByLongPress = true;
+        this.stopOfflineLongPressDetection();
+        this.stopOfflineRecording();
+      }
+    }, 50);
+  }
+
+  stopOfflineLongPressDetection(): void {
+    if (this.offlineLongPressTimer !== undefined) {
+      clearInterval(this.offlineLongPressTimer);
+      this.offlineLongPressTimer = undefined;
+    }
+    this.isOfflineLongPressing = false;
+    this.offlineLongPressProgress = 0;
+  }
+
+  startOfflineRecording(): void {
+    if (this.isOfflineRecording) {
+      return;
+    }
+    try {
+      this.offlineStore.setup(this.getAbilityContext().filesDir);
+      this.offlineStartedAt = Date.now();
+      this.offlineStore.startSession(this.offlineStartedAt);
+      this.offlineSampleCount = 0;
+      this.offlineElapsedSeconds = 0;
+      this.isOfflineRecording = true;
+      this.offlineButtonString = '停止';
+      this.offlineStatus = '记录中';
+      if (this.offlineRecordTimer !== undefined) {
+        clearInterval(this.offlineRecordTimer);
+      }
+      this.appendOfflineSample();
+      this.offlineRecordTimer = setInterval(() => {
+        this.appendOfflineSample();
+      }, 1000);
+    } catch (error) {
+      this.offlineStatus = '启动失败';
+      console.error(`启动离线记录失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  stopOfflineRecording(): void {
+    this.stopOfflineLongPressDetection();
+    if (this.offlineRecordTimer !== undefined) {
+      clearInterval(this.offlineRecordTimer);
+      this.offlineRecordTimer = undefined;
+    }
+    if (!this.isOfflineRecording) {
+      return;
+    }
+    this.offlineElapsedSeconds = Math.max(0, Math.floor((Date.now() - this.offlineStartedAt) / 1000));
+    const report: TrainingReport | null = this.offlineStore.finishSession(Date.now());
+    this.isOfflineRecording = false;
+    this.offlineButtonString = '开始';
+    if (report) {
+      this.offlineStatus = `已生成报告 ${report.sampleCount}点`;
+      this.selectedReport = report;
+    } else {
+      this.offlineStatus = '无报告';
+    }
+    this.refreshOfflineReports();
+  }
+
+  appendOfflineSample(): void {
+    if (!this.isOfflineRecording) {
+      return;
+    }
+
+    const imu: OfflineImuSample = {
+      acceleration: {
+        x: this.wtBLE.ble_sensorData.acceleration.x,
+        y: this.wtBLE.ble_sensorData.acceleration.y,
+        z: this.wtBLE.ble_sensorData.acceleration.z
+      },
+      angularVelocity: {
+        x: this.wtBLE.ble_sensorData.angularVelocity.x,
+        y: this.wtBLE.ble_sensorData.angularVelocity.y,
+        z: this.wtBLE.ble_sensorData.angularVelocity.z
+      },
+      angle: {
+        roll: this.wtBLE.ble_sensorData.angle.roll,
+        pitch: this.wtBLE.ble_sensorData.angle.pitch,
+        yaw: this.wtBLE.ble_sensorData.angle.yaw
+      },
+      rawData: [...this.wtBLE.ble_sensorData.rawData]
+    };
+
+    const sample: OfflineRawSample = {
+      schemaVersion: 1,
+      timestamp: Date.now(),
+      heartRate: this.heartRate,
+      gps: {
+        longitude: this.location[0],
+        latitude: this.location[1],
+        speed: this.speed,
+        headingT: this.headingT,
+        accuracy: this.gps_accuracy
+      },
+      imu: imu
+    };
+
+    try {
+      this.offlineStore.appendSample(sample);
+      this.offlineSampleCount += 1;
+      this.offlineElapsedSeconds = Math.max(0, Math.floor((Date.now() - this.offlineStartedAt) / 1000));
+      this.offlineStatus = `记录中 ${formatDuration(this.offlineSampleCount)}`;
+    } catch (error) {
+      this.offlineStatus = '写入失败';
+      console.error(`写入离线样本失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  getSelectedReportDateText(): string {
+    const report: TrainingReport | null = this.selectedReport;
+    if (report === null) {
+      return '';
+    }
+    return formatShortDateTime(report.startedAt);
+  }
+
+  getSelectedReportSummaryText(): string {
+    const report: TrainingReport | null = this.selectedReport;
+    if (report === null) {
+      return '';
+    }
+    return `${formatDuration(report.durationSec)}  ${report.sampleCount}点`;
+  }
+
+  getSelectedReportHeartText(): string {
+    const report: TrainingReport | null = this.selectedReport;
+    if (report === null) {
+      return '';
+    }
+    return `均心 ${report.averageHeartRate}  最高 ${report.maxHeartRate}`;
+  }
+
+  getSelectedReportDistanceText(): string {
+    const report: TrainingReport | null = this.selectedReport;
+    if (report === null) {
+      return '';
+    }
+    return `距离 ${report.distanceMeter} m`;
+  }
+
+  buildHeartBars(report: TrainingReport | null): ChartBar[] {
+    const bars: ChartBar[] = [];
+    if (report === null || report.heartSeries.length === 0) {
+      return bars;
+    }
+
+    let maxValue: number = 1;
+    for (let i: number = 0; i < report.heartSeries.length; i++) {
+      maxValue = Math.max(maxValue, report.heartSeries[i].value);
+    }
+
+    const step: number = Math.max(1, Math.ceil(report.heartSeries.length / 36));
+    for (let i: number = 0; i < report.heartSeries.length; i += step) {
+      const value: number = report.heartSeries[i].value;
+      const bar: ChartBar = {
+        id: `${i}`,
+        value: value,
+        height: Math.max(4, Math.floor(value / maxValue * 58))
+      };
+      bars.push(bar);
+    }
+    return bars;
+  }
+
+  buildGpsPoints(report: TrainingReport | null): PlotPoint[] {
+    const points: PlotPoint[] = [];
+    if (report === null || report.gpsTrack.length === 0) {
+      return points;
+    }
+
+    let minLon: number = report.gpsTrack[0].longitude;
+    let maxLon: number = report.gpsTrack[0].longitude;
+    let minLat: number = report.gpsTrack[0].latitude;
+    let maxLat: number = report.gpsTrack[0].latitude;
+    for (let i: number = 0; i < report.gpsTrack.length; i++) {
+      minLon = Math.min(minLon, report.gpsTrack[i].longitude);
+      maxLon = Math.max(maxLon, report.gpsTrack[i].longitude);
+      minLat = Math.min(minLat, report.gpsTrack[i].latitude);
+      maxLat = Math.max(maxLat, report.gpsTrack[i].latitude);
+    }
+
+    const lonRange: number = Math.max(maxLon - minLon, 0.000001);
+    const latRange: number = Math.max(maxLat - minLat, 0.000001);
+    const step: number = Math.max(1, Math.ceil(report.gpsTrack.length / 48));
+    for (let i: number = 0; i < report.gpsTrack.length; i += step) {
+      const point: PlotPoint = {
+        id: `${i}`,
+        x: Math.floor((report.gpsTrack[i].longitude - minLon) / lonRange * 144),
+        y: Math.floor((maxLat - report.gpsTrack[i].latitude) / latRange * 80)
+      };
+      points.push(point);
+    }
+    return points;
   }
 
   wtBLE: BleManagement = new BleManagement(); // 用于连接并读取wt姿态传感器
@@ -905,15 +1624,26 @@ struct Index {
     this.mygroup.data[0].color = groupColor;
 
     // 切换到主界面 - 使用正确的方法名
-    this.pushPage('LoadInterface');
-    this.connectWatchMqtt();
+    this.pushPage('BleDeviceSelection');
   }
 
   //监测时间3s，屏幕常量关闭
   aboutToAppear() {
-    this.pushPage('WindInterfaceBuilder')
-    notificationManager.requestEnableNotification();
-    startTimerNotification(1000); // 每 1 秒发送一次通知
+    if (!this.hasInitiatedJump) {
+      this.hasInitiatedJump = true;
+      this.pushPage('ModeSelection')
+    }
+    this.setupBleCallbacks();
+    try {
+      this.offlineStore.setup(this.getAbilityContext().filesDir);
+      this.refreshOfflineReports();
+    } catch (error) {
+      console.error(`初始化离线存储失败: ${JSON.stringify(error)}`);
+    }
+    notificationManager.requestEnableNotification(requestEnableNotificationCallback);
+    this.stopNotificationTimer();
+    this.notificationTimer = startTimerNotification(1000); // 每 1 秒发送一次通知
+
     // this.listenToScreen();
     this.check_test();
     this.mqttManager.setHost(user_url);
@@ -937,7 +1667,7 @@ struct Index {
         console.error(`Failed to obtain all the display objects. Code: ${err.code}, message: ${err.message}`);
         return;
       }
-      console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data)}`);
+      // console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data)}`);
     });
 
     display.on('change', callback);
@@ -947,7 +1677,7 @@ struct Index {
   //设置屏幕常亮
   async keepScreenOn(enable: boolean) {
     try {
-      const win = await window.getLastWindow(getContext(this));
+      const win = await window.getLastWindow(this.getAbilityContext());
       await win.setWindowKeepScreenOn(enable);
     } catch (err) {
       console.error('设置屏幕常亮失败:', JSON.stringify(err));
@@ -957,7 +1687,7 @@ struct Index {
   //权限获取
   async requestPermissionAndStart() {
     const atManager = abilityAccessCtrl.createAtManager();
-    const context = getContext(this) as common.UIAbilityContext;
+    const context = this.getAbilityContext();
 
     const permissions: Permissions[] = [
       'ohos.permission.READ_HEALTH_DATA' as Permissions,
@@ -977,11 +1707,27 @@ struct Index {
       (err: BusinessError, data: PermissionRequestResult) => {
         if (err) {
           console.error(`权限请求失败: code=${err.code}, message=${err.message}`);
+          this.isPermissionRequestCompleted = true;
+          this.hasBluetoothPermission = false;
+          if (this.isBleSelectionVisible) {
+            this.bleScanStatus = '蓝牙权限请求失败';
+          }
           return;
         }
 
         // 遍历授权结果
+        let bluetoothPermissionFound: boolean = false;
+        let bluetoothPermissionGranted: boolean = true;
         for (let i = 0; i < data.authResults.length; i++) {
+          const permissionName: string = data.permissions[i];
+          if (permissionName === 'ohos.permission.ACCESS_BLUETOOTH' ||
+            permissionName === 'ohos.permission.DISCOVER_BLUETOOTH' ||
+            permissionName === 'ohos.permission.USE_BLUETOOTH') {
+            bluetoothPermissionFound = true;
+            if (data.authResults[i] !== 0) {
+              bluetoothPermissionGranted = false;
+            }
+          }
           if (data.authResults[i] !== 0) {
             console.warn(`权限 ${data.permissions[i]} 被拒绝!`);
           }
@@ -990,20 +1736,30 @@ struct Index {
           }
         }
 
+        this.isPermissionRequestCompleted = true;
+        this.hasBluetoothPermission = bluetoothPermissionFound && bluetoothPermissionGranted;
+        if (this.isBleSelectionVisible) {
+          if (this.hasBluetoothPermission) {
+            this.startBleDeviceScan();
+          } else {
+            this.bleScanStatus = '未获得蓝牙权限';
+          }
+        }
+
         // 判断是否全部授权
         const allGranted = data.authResults.every(result => result === 0);
         if (allGranted) {
           console.info('所有权限已授权,开始监测');
-          // this.startHeartRateSensor(); // 心率订阅函数
+          this.startHeartRateSensor(); // 心率订阅函数
           this.startLocationService(); // 定位
-          // this.startAccelerometer();//加速度传感器
+          this.startAccelerometer();//加速度传感器
           // this.startUploadTimer_queue(this.uploadInterval);//通过队列上传(http)
           // this.startCheckTimer();//定时监测服务器是否连接成功
           // this.startGpsTimer(300);//通过定时器定位
           // this.uploadData_test();//上传数据（测试用）
           // this.startUploadTimer(this.uploadInterval);//定时上传数据
           // this.runCapacityTests();//上传数据容量测试
-          this.wtBLE.checkDevice();
+          // BLE 由设备选择页启动扫描并连接。
         } else {
           console.warn('部分权限未授权，功能可能受限');
         }
@@ -1036,13 +1792,17 @@ struct Index {
 
 
   async startMqttSend(intervalMs: number = 1000) {
+    if (this.MqttTimer !== undefined) {
+      console.info('MQTT上传定时器已启动');
+      return;
+    }
 
     this.MqttTimer = setInterval(async () => {
+      try {
 
-      // 如果未连接，直接取消
+      // MQTT publish 会在断线时进入管理器的离线队列。
       if(!this.mqttManager.isConnected){
         console.error('fail to connect to the server')
-        return;
       }
 
       let myWindData: WindDataMessage = this.mqttManager.getLatestWindData();
@@ -1078,12 +1838,14 @@ struct Index {
       this.myMqttUploadData.data.customWindSpeed = myWindData.customWindSpeed;
       this.myMqttUploadData.data.customWindDirection = myWindData.customWindDirection;
 
-      //航向存在时
-      if(this.myMqttUploadData.data.headingT){
-        this.myMqttUploadData.data.headingT = Math.trunc(this.myMqttUploadData.data.headingT);
-        this.myMqttUploadData.data.headingM = Math.trunc( (this.myMqttUploadData.data.headingT - declination) % 360 );
+      //航向存在时，0° 是有效航向，不能用 truthy 判断。
+      if(this.headingT !== null){
+        const headingTValue: number = Math.trunc(this.headingT);
+        const headingMValue: number = Math.trunc((headingTValue - declination + 360) % 360);
+        this.myMqttUploadData.data.headingT = headingTValue;
+        this.myMqttUploadData.data.headingM = headingMValue;
 
-        let A : number = this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection
+        let A : number = headingMValue - this.myMqttUploadData.data.windDirection
         if( ( 90 < A && A <= 180) || (-270 < A && A < -180)){
           this.myMqttUploadData.data.sailStatus = "D_P" //顺风左舷
         }else if ((-180 < A && A < -90)||(180 < A && A < 270)){
@@ -1113,31 +1875,35 @@ struct Index {
 
         let w: number = 0;
         //漂角计算
-        if(Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw) <= 90){
-          w= this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw;
-        }else if(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw > 90){
-          w= this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw - 360;
-        }else if(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw < -90){
-          w = 360 + this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.yaw
+        if(Math.abs(headingMValue - this.myMqttUploadData.data.yaw) <= 90){
+          w= headingMValue - this.myMqttUploadData.data.yaw;
+        }else if(headingMValue - this.myMqttUploadData.data.yaw > 90){
+          w= headingMValue - this.myMqttUploadData.data.yaw - 360;
+        }else if(headingMValue - this.myMqttUploadData.data.yaw < -90){
+          w = 360 + headingMValue - this.myMqttUploadData.data.yaw
         }
 
         this.myMqttUploadData.data.leeway = this.calcLeeway(this.myMqttUploadData.data.sailStatus, w);
 
         //角度和VMG计算
-        if(Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection) <= 180){
-          this.myMqttUploadData.data.angle = Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection);
+        let angleValue: number;
+        if(Math.abs(headingMValue - this.myMqttUploadData.data.windDirection) <= 180){
+          angleValue = Math.abs(headingMValue - this.myMqttUploadData.data.windDirection);
         }else {
-          this.myMqttUploadData.data.angle = 360 - Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.windDirection);
+          angleValue = 360 - Math.abs(headingMValue - this.myMqttUploadData.data.windDirection);
         }
-        this.myMqttUploadData.data.vmg = toFixedNumber(this.myMqttUploadData.data.speed * Math.cos(this.myMqttUploadData.data.angle));
+        this.myMqttUploadData.data.angle = angleValue;
+        this.myMqttUploadData.data.vmg = toFixedNumber(this.myMqttUploadData.data.speed * Math.cos(degreesToRadians(angleValue)));
 
         //自定义角度和自定义VMG计算
-        if(Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.customWindDirection) <= 180){
-          this.myMqttUploadData.data.customAngle = Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.customWindDirection);
+        let customAngleValue: number;
+        if(Math.abs(headingMValue - this.myMqttUploadData.data.customWindDirection) <= 180){
+          customAngleValue = Math.abs(headingMValue - this.myMqttUploadData.data.customWindDirection);
         }else {
-          this.myMqttUploadData.data.customAngle = 360 - Math.abs(this.myMqttUploadData.data.headingM - this.myMqttUploadData.data.customWindDirection);
+          customAngleValue = 360 - Math.abs(headingMValue - this.myMqttUploadData.data.customWindDirection);
         }
-        this.myMqttUploadData.data.customVmg = toFixedNumber(this.myMqttUploadData.data.speed * Math.cos(this.myMqttUploadData.data.customAngle)); //保留四位小数
+        this.myMqttUploadData.data.customAngle = customAngleValue;
+        this.myMqttUploadData.data.customVmg = toFixedNumber(this.myMqttUploadData.data.speed * Math.cos(degreesToRadians(customAngleValue))); //保留四位小数
 
         let windddddd: number = Math.abs(this.myMqttUploadData.data.windSpeed);
         let standardspeedddddd: number = -1;
@@ -1323,17 +2089,23 @@ struct Index {
       // console.log(JSON.stringify(winddatalist));
 
 
+      } catch (error) {
+        console.error(`MQTT上传循环异常: ${JSON.stringify(error)}`);
+      }
     }, intervalMs);
   }
 
   //定时监测网络状态
   async startCheckTimer(intervalMs : number = 1000) {
+    this.stopCheckTimer();
 
     // "longitude":"121.493807","latitude":"31.300226"
 
     this.checkTimer = setInterval(async () => {
 
-      let success = this.mqttManager.isConnected;
+      let success = false;
+      if (this.appMode === APP_MODE_SERVER) {
+        success = this.mqttManager.isConnected;
 
       if(success == true){
         console.error('已连接')
@@ -1345,16 +2117,24 @@ struct Index {
 
         this.isConnected = false;
         this.connectionStatusColor = Color.Red;
-        if(windBoatsource != -1){
-          // await this.connectWatchMqtt();
+        if(windBoatsource != -1 && !this.mqttManager.isConnecting()){
+          await this.connectWatchMqtt();
           console.error('重新连接中')
         }
-        if(this.isStartUpload){
+        if(this.isStartUpload && this.MqttTimer === undefined){
           this.startMqttSend()
         }
 
       }
 
+      } else {
+        this.isConnected = false;
+        this.connectionStatusColor = Color.Gray;
+      }
+
+      if (this.selectedBleDeviceId.length === 0) {
+        return;
+      }
       success = false;
       success =  await this.wtBLE.checkDeviceName()
       if(success == true){
@@ -1373,6 +2153,13 @@ struct Index {
 
     }, intervalMs);
     console.info(`启动定时监测，间隔: ${intervalMs}ms`);
+  }
+
+  stopCheckTimer(): void {
+    if (this.checkTimer !== undefined) {
+      clearInterval(this.checkTimer);
+      this.checkTimer = undefined;
+    }
   }
 
   //添加定时上传(队列)
@@ -1417,7 +2204,8 @@ struct Index {
         ble_SensorData: ble_Data
       };
 
-      // this.dataUploader.addDataToQueue(sensor_data);
+      this.dataUploader.addDataToQueue(sensor_data);
+      this.dataQueueLength = this.dataUploader.dataQueueLength;
       // this.dataUploader.addDataToQueue(sensor_data);
 
       // if(this.dataUploader.isNetworkAvailable){
@@ -1434,14 +2222,25 @@ struct Index {
   }
 
   stopUploadTimer() {
-    if (this.uploadTimer !== undefined || this.uploadTimer_buffer !== undefined) {
+    if (this.uploadTimer !== undefined) {
       clearInterval(this.uploadTimer);
-      clearInterval(this.uploadTimer_buffer);
-      clearInterval(this.MqttTimer);
       this.uploadTimer = undefined;
+    }
+    if (this.uploadTimer_buffer !== undefined) {
+      clearInterval(this.uploadTimer_buffer);
       this.uploadTimer_buffer = undefined;
+    }
+    if (this.MqttTimer !== undefined) {
+      clearInterval(this.MqttTimer);
       this.MqttTimer = undefined;
-      console.info('停止定时上传');
+    }
+    console.info('停止定时上传');
+  }
+
+  stopNotificationTimer(): void {
+    if (this.notificationTimer !== undefined) {
+      clearInterval(this.notificationTimer);
+      this.notificationTimer = undefined;
     }
   }
 
@@ -1471,7 +2270,7 @@ struct Index {
   async startLocationService() {
     try{
       geoLocationManager.on('locationChange',this.gnss_request, (location: geoLocationManager.Location) => {
-        // console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude)
+        // console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude, '速度=', location.speed)
         if (location.longitude != this.location[0] || location.latitude != this.location[1]){
           this.location[0] = location.longitude;
           this.location[1] = location.latitude;
@@ -1494,18 +2293,21 @@ struct Index {
       })
     }
     catch(error){
-      console.error('定位失败：'+ error.message);}
+      let e: BusinessError = error as BusinessError;
+      console.error(`定位失败：${e.message}`);}
     // throw new Error('Method not implemented.');
   }
 
   //通过定时器读取位置信息
   async startGpsTimer(intervalMs: number = 1000) {
+    this.stopGpsTimer();
     gpsTimer = setInterval(async () => {
       try {
         const location = await geoLocationManager.getCurrentLocation(this.timer_request);
         // console.info(`经度：${location.longitude}, 纬度：${location.latitude}`);
         this.location[0] = location.longitude;
         this.location[1] = location.latitude;
+        console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude, '速度=', location.speed)
       } catch (err) {
         console.error(`获取GPS失败: ${JSON.stringify(err)}`);
       }
@@ -1536,9 +2338,9 @@ struct Index {
       payload: generateTestData(sizeKB),
       timestamp: Date.now()
     };
+    const testUploadCapRequest = http.createHttp();
 
     try {
-      const testUploadCapRequest = http.createHttp();
       const start = Date.now();
       await testUploadCapRequest.request(
         "http://124.222.53.152:8080/api/upload",
@@ -1563,8 +2365,10 @@ struct Index {
       return {
         success: false,
         sizeKB,
-        error
+        error: JSON.stringify(error)
       } as ITestResult;
+    } finally {
+      testUploadCapRequest.destroy();
     }
   }
 
@@ -1611,27 +2415,41 @@ struct Index {
 
     this.mqttManager.setClientId(clientId);
 
+    if (windBoatsource != -1) {
+      await this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`, 1);
+    }
+
     const connected = await this.mqttManager.connect();
 
     if(connected) {
       console.info('手表端MQTT连接成功');
-      //订阅风速
-      if(windBoatsource != -1){
-        this.mqttManager.subscribe(`gateway/env/wind/${tenantCode}/${windBoatsource}`,1);
-      }else {
-        console.error("no windboat selection")
-      }
+    } else if (windBoatsource == -1) {
+      console.error("no windboat selection")
     }
   }
 
   async aboutToDisappear() {
     try {
-      sensor.off(sensor.SensorId.HEART_RATE);
-      sensor.off(sensor.SensorId.ACCELEROMETER_UNCALIBRATED);
+      this.stopLongPressDetection();
+      this.stopOfflineLongPressDetection();
+      if (this.coolDownTimer !== undefined) {
+        clearTimeout(this.coolDownTimer);
+        this.coolDownTimer = undefined;
+      }
+      this.stopNotificationTimer();
+      this.stopCheckTimer();
+      this.stopOfflineRecording();
       this.stopUploadTimer();
+      sensor.off(sensor.SensorId.HEART_RATE);
+      sensor.off(sensor.SensorId.ACCELEROMETER);
+      this.dataUploader.dispose();
       if (this.mqttManager) {
         await this.mqttManager.destroy(); // 必须等待彻底断开
       }
+      this.wtBLE.clearDeviceDiscoveryCallback();
+      this.wtBLE.clearOnConnectCallback();
+      this.wtBLE.clearOnDisconnectCallback();
+      this.hasSetupBleCallbacks = false;
       this.wtBLE.disconnect();
       geoLocationManager.off('locationChange');
       console.log('定位服务关闭');
@@ -1654,8 +2472,28 @@ function formatDateTime(date: Date): string {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
+function formatShortDateTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${month}-${day} ${hours}:${minutes}`;
+}
+
+function formatDuration(seconds: number): string {
+  const safeSeconds: number = Math.max(0, seconds);
+  const minutes: number = Math.floor(safeSeconds / 60);
+  const remainSeconds: number = safeSeconds % 60;
+  return `${minutes}分${String(remainSeconds).padStart(2, "0")}秒`;
+}
+
 // 通用方法，保留指定小数位数
 function toFixedNumber(value: number, decimalPlaces: number = 4): number {
   const factor = Math.pow(10, decimalPlaces);
   return Math.round(value * factor) / factor;
+}
+
+function degreesToRadians(degrees: number): number {
+  return degrees * Math.PI / 180;
 }

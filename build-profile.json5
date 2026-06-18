@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\30294\\.ohos\\config\\default_sailwatch_track_F8DrKptPfmvVDDCvn75XZvt6R4YV3F8pRFH6SgL33bA=.cer",
+          "certpath": "C:\\Users\\a2607\\.ohos\\config\\default_sailwatch_track_SYw8ghiNCuIqbvAorBJ54r19YLUzw-XJuyh3tG5SWkI=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B8046E39321FA1633578C5BF9C07B7D14AF6663E268F15D1FCE3C6D14A62E588B6EC33F90BFBC1E",
-          "profile": "C:\\Users\\30294\\.ohos\\config\\default_sailwatch_track_F8DrKptPfmvVDDCvn75XZvt6R4YV3F8pRFH6SgL33bA=.p7b",
+          "keyPassword": "0000001918F4466916EDC54F2B5AC0D658C755110E05566C812F0A861223779189170918D00A0185B9",
+          "profile": "C:\\Users\\a2607\\.ohos\\config\\default_sailwatch_track_SYw8ghiNCuIqbvAorBJ54r19YLUzw-XJuyh3tG5SWkI=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\30294\\.ohos\\config\\default_sailwatch_track_F8DrKptPfmvVDDCvn75XZvt6R4YV3F8pRFH6SgL33bA=.p12",
-          "storePassword": "0000001BDDC6DA211BCF3F3AFE2BE0789D2597E31315FBAD09A66BD38225E6395DAD889D06BA0688A8B87F"
+          "storeFile": "C:\\Users\\a2607\\.ohos\\config\\default_sailwatch_track_SYw8ghiNCuIqbvAorBJ54r19YLUzw-XJuyh3tG5SWkI=.p12",
+          "storePassword": "000000193CB3A10FB0293ED2C15E43EEA8D758F596B88DC8F67B67155B9D5901252913F250C7C79CC6"
         }
       }
     ],

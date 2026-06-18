@@ -1,6 +1,10 @@
 import http from '@ohos.net.http';
 import Queue from '@ohos.util.Queue';
 
+function formatErrorMessage(error: Error): string {
+  return error.message ? error.message : JSON.stringify(error);
+}
+
 export function uploadDataToString(data: UploadData): string {
   // 按固定顺序拼接所有字段
   return [
@@ -53,13 +57,13 @@ export interface ble_SensorData {
 
 
 //上传服务器数据内容格式
-interface UploadData {
+export interface UploadData {
   heartRate: number;
   location: number[];    // [经度, 纬度]
   speed: number;
   sensorData: number[];  // [x, y, z] 加速度
   timestamp: number;     // 添加时间戳
-  lag_time;
+  lag_time: number;
   gps_change: number;
   ble_SensorData: ble_SensorData;
 }
@@ -81,6 +85,11 @@ export class DataUploader {
   private readonly MAX_QUEUE_SIZE = 3000; // 队列最大容量
   private tryupload_times: number = 0;
   private success: boolean = false;
+  private retryTimer: number | undefined = undefined;
+
+  constructor() {
+    this.setupRetryTimer();
+  }
 
   // 数据采集后调用此方法入队
   public addDataToQueue(sensorData: UploadData): void {
@@ -98,6 +107,7 @@ export class DataUploader {
 
     // 3. 数据入队
     this.dataQueue.add(dataPacket);
+    this.dataQueueLength = this.dataQueue.length;
     console.log(`数据已入队，当前队列大小: ${this.dataQueue.length}`);
 
 
@@ -108,9 +118,8 @@ export class DataUploader {
   // 网络状态检测方法
   public async checkNetwork(): Promise<boolean> {
     this.dataQueueLength = this.dataQueue.length;
+    const httpRequest = http.createHttp();
     try {
-      const httpRequest = http.createHttp();
-
       let ble_Data: ble_SensorData = {
         header : 99,
         flag : 99,
@@ -158,11 +167,12 @@ export class DataUploader {
           header: { "Content-Type": "application/json" }
         }
       );
-      httpRequest.destroy();
       return response.responseCode === http.ResponseCode.OK;
     } catch(err) {
-      // console.error(err.message)
+      console.error(formatErrorMessage(err as Error))
       return false;
+    } finally {
+      httpRequest.destroy();
     }
   }
 
@@ -193,6 +203,8 @@ export class DataUploader {
           this.success = await this.uploadSinglePacket(dataPacket);
           if (this.success) {
             this.dataQueue.pop(); // 上传成功才移除
+            this.tryupload_times = 0;
+            this.dataQueueLength = this.dataQueue.length;
             console.log(`数据上传成功，剩余队列: ${this.dataQueue.length}`);
           } else {
             this.tryupload_times += 1;
@@ -202,6 +214,7 @@ export class DataUploader {
         }
         else {
           this.dataQueue.pop();
+          this.dataQueueLength = this.dataQueue.length;
           console.warn('队头错误，移除')
           this.tryupload_times = 0;
         }
@@ -241,11 +254,21 @@ export class DataUploader {
 
   // 在类初始化时启动定时器
   private setupRetryTimer(timeInterval:number = 3000): void {
-    setInterval(async () => {
+    if (this.retryTimer !== undefined) {
+      clearInterval(this.retryTimer);
+    }
+    this.retryTimer = setInterval(async () => {
       if (!this.isUploading && this.dataQueue.length > 0) {
         await this.tryStartUpload();
       }
     }, timeInterval); // 默认每3秒尝试一次
+  }
+
+  public dispose(): void {
+    if (this.retryTimer !== undefined) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = undefined;
+    }
   }
 
 }
