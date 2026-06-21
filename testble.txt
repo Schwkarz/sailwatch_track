@@ -1,0 +1,666 @@
+I     Ability onCreate
+I     Ability onWindowStageCreate
+I     Ability onForeground
+I     Succeeded in loading the content.
+I     启动定时监测，间隔: 3000ms
+I     权限 ohos.permission.READ_HEALTH_DATA 被通过
+I     权限 ohos.permission.LOCATION 被通过
+I     权限 ohos.permission.APPROXIMATELY_LOCATION 被通过
+I     权限 ohos.permission.ACCELEROMETER 被通过
+I     权限 ohos.permission.INTERNET 被通过
+I     权限 ohos.permission.ACCESS_BLUETOOTH 被通过
+I     权限 ohos.permission.DISCOVER_BLUETOOTH 被通过
+I     权限 ohos.permission.USE_BLUETOOTH 被通过
+I     权限 ohos.permission.KEEP_BACKGROUND_RUNNING 被通过
+I     所有权限已授权,开始监测
+I     requestEnableNotification success
+I     start scan wt901 devices
+I     try connect
+I     connected
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] read uuid=00002A00-0000-1000-8000-00805F9B34FB, hex=57 54 39 30 31 42 4C 45 36 37, ascii=WT901BLE67
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     Notifications enabled
+I     connected
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     disconnected
+I     设备连接已断开
+E     Target service not found
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     Notifications enabled
+I     connected
+I     connected
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+E     蓝牙重新连接中
+I     try connect
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+W     [BLE_ID_DIAG] getServices/read characteristics failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+W     [BLE_ID_DIAG] getServices/read characteristics failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     connected
+I     disconnected
+I     设备连接已断开
+E     Target service not found
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     connected
+E     Target service not found
+I     disconnected
+I     设备连接已断开
+E     Target service not found
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900007, message=Inner error.
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     Notifications enabled
+I     connected
+I     connected
+I     connected
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] read uuid=00002A00-0000-1000-8000-00805F9B34FB, hex=57 54 39 30 31 42 4C 45 36 37, ascii=WT901BLE67
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+E     蓝牙重新连接中
+I     try connect
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+W     [BLE_ID_DIAG] getServices/read characteristics failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+W     [BLE_ID_DIAG] getServices/read characteristics failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] getServices/read characteristics failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     connected
+I     disconnected
+I     设备连接已断开
+E     Target service not found
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     Notifications enabled
+I     connected
+I     connected
+I     connected
+I     connected
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900007, message=Inner error.
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     connected
+I     Notifications enabled
+I     connected
+I     connected
+I     connected
+I     connected
+I     connected
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     Notifications enabled
+I     connected
+I     connected
+I     connected
+I     connected
+I     connected
+I     connected
+I     Notifications enabled
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900007, message=Inner error.
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] read uuid=00002A04-0000-1000-8000-00805F9B34FB, hex=0C 00 18 00 0A 00 90 01, ascii=........
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] read uuid=00002AA6-0000-1000-8000-00805F9B34FB, hex=01, ascii=.
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     disconnected
+I     设备连接已断开
+E     Target service not found
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+E     蓝牙重新连接中
+I     try connect
+I     connected
+I     Notifications enabled
+I     connected
+I     connected
+I     connected
+I     connected
+I     connected
+I     connected
+I     connected
+I     Notifications enabled
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+I     [BLE_ID_DIAG] serviceCount=3
+I     [BLE_ID_DIAG] service[0]=00001800-0000-1000-8000-00805F9B34FB, characteristicCount=4
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A00-0000-1000-8000-00805F9B34FB, properties={"write":true,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A00-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A01-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+I     disconnected
+I     设备连接已断开
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] pairDevice failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+W     [BLE_ID_DIAG] GATT client disconnected before service discovery
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900007, message=Inner error.
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+E     蓝牙重新连接中
+I     try connect
+I     connected
+W     [BLE_ID_DIAG] read 00002A01-0000-1000-8000-00805F9B34FB failed: code=2900007, message=Inner error.
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002A04-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002A04-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] characteristic service=00001800-0000-1000-8000-00805F9B34FB, uuid=00002AA6-0000-1000-8000-00805F9B34FB, properties={"write":false,"writeNoResponse":false,"read":true,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+W     [BLE_ID_DIAG] read 00002AA6-0000-1000-8000-00805F9B34FB failed: code=2900099, message=BussinessError 2900099: Operation failed
+I     [BLE_ID_DIAG] service[1]=00001801-0000-1000-8000-00805F9B34FB, characteristicCount=0
+I     [BLE_ID_DIAG] service[2]=0000FFE5-0000-1000-8000-00805F9A34FB, characteristicCount=2
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE9-0000-1000-8000-00805F9A34FB, properties={"write":true,"writeNoResponse":true,"read":false,"notify":false,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] characteristic service=0000FFE5-0000-1000-8000-00805F9A34FB, uuid=0000FFE4-0000-1000-8000-00805F9A34FB, properties={"write":false,"writeNoResponse":false,"read":false,"notify":true,"indicate":false,"broadcast":false,"authenticatedSignedWrite":false,"extendedProperties":false}
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     [BLE_ID_DIAG] start deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedBefore=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] pairDevice begin deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairDevice success deviceId=C8:0E:DD:D0:6A:A1
+I     [BLE_ID_DIAG] pairedAfter=["C8:44:A0:AF:FE:A9","98:6F:67:42:27:B9"]
+I     [BLE_ID_DIAG] remoteName=WT901BLE67
+E     Target service not found
+I     disconnected
+I     设备连接已断开
+I     [BLE_ID_DIAG] serviceCount=0
+I     [BLE_ID_DIAG] finish deviceName=WT901BLE67, scanDeviceId=C8:0E:DD:D0:6A:A1

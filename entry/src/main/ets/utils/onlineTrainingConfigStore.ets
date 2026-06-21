@@ -1,6 +1,8 @@
 import { fileIo } from '@kit.CoreFileKit';
 
-const CONFIG_SCHEMA_VERSION: number = 1;
+const CONFIG_SCHEMA_VERSION: number = 2;
+
+export type BlePreferenceMode = 'unconfigured' | 'device' | 'skip';
 
 export interface OnlineTrainingConfig {
   schemaVersion: number;
@@ -10,6 +12,9 @@ export interface OnlineTrainingConfig {
   mhmId: string;
   mhmName: string;
   groupColor: string;
+  bleMode: BlePreferenceMode;
+  bleMac: string;
+  bleName: string;
 }
 
 export class OnlineTrainingConfigStore {
@@ -31,8 +36,14 @@ export class OnlineTrainingConfigStore {
       if (text.length === 0) {
         return null;
       }
-      const config: OnlineTrainingConfig = JSON.parse(text) as OnlineTrainingConfig;
-      return this.isValid(config) ? config : null;
+      const parsed = JSON.parse(text) as OnlineTrainingConfig;
+      if (parsed.schemaVersion === 1) {
+        parsed.schemaVersion = CONFIG_SCHEMA_VERSION;
+        parsed.bleMode = 'unconfigured';
+        parsed.bleMac = '';
+        parsed.bleName = '';
+      }
+      return this.isValid(parsed) ? parsed : null;
     } catch (error) {
       console.error(`read online training config failed: ${JSON.stringify(error)}`);
       return null;
@@ -50,7 +61,10 @@ export class OnlineTrainingConfigStore {
       groupId: config.groupId,
       mhmId: config.mhmId,
       mhmName: config.mhmName,
-      groupColor: config.groupColor
+      groupColor: config.groupColor,
+      bleMode: config.bleMode,
+      bleMac: config.bleMac,
+      bleName: config.bleName
     };
     this.writeText(JSON.stringify(normalized));
   }
@@ -69,7 +83,9 @@ export class OnlineTrainingConfigStore {
       config.groupId.length > 0 &&
       config.mhmId.length > 0 &&
       config.mhmName.length > 0 &&
-      config.groupColor.length > 0;
+      config.groupColor.length > 0 &&
+      (config.bleMode === 'unconfigured' || config.bleMode === 'skip' ||
+        (config.bleMode === 'device' && config.bleMac.length > 0));
   }
 
   private pathExists(path: string): boolean {

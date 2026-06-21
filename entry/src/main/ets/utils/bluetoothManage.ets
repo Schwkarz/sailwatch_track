@@ -6,6 +6,7 @@ const WT901_DEVICE_PREFIX: string = "WT901";
 export interface BleDeviceItem {
   deviceId: string;
   deviceName: string;
+  macAddress: string;
   rssi: number;
   lastSeen: number;
 }
@@ -69,6 +70,17 @@ export class BleManagement {
     }
   };
   private characteristicChangeCallback: ((changedChar: ble.BLECharacteristic) => void) | null = null;
+  private macQueryLoggingUntil: number = 0;
+  private macAddressByDeviceName: Map<string, string> = new Map<string, string>();
+  private autoMacProbeQueue: BleDeviceItem[] = [];
+  private autoMacProbeAttemptedNames: Set<string> = new Set<string>();
+  private autoMacProbeActive: boolean = false;
+  private autoMacProbeDeviceId: string = "";
+  private autoMacProbeDeviceName: string = "";
+  private autoMacProbeStartTimer: number | undefined = undefined;
+  private autoMacProbeTimeoutTimer: number | undefined = undefined;
+  private macQueryDeviceId: string = "";
+  private macQueryDeviceName: string = "";
 
   public ble_sensorData: wt_SensorData = {
     header : 0,
@@ -154,7 +166,10 @@ export class BleManagement {
   }
 
   public connectDevice(deviceId: string, deviceName: string): boolean {
+    this.cancelAutoMacProbe();
     this.selectDevice(deviceId, deviceName);
+    this.macQueryDeviceId = deviceId;
+    this.macQueryDeviceName = deviceName;
     this.stopScan();
     return this.tryConnect(deviceId);
   }
@@ -172,7 +187,7 @@ export class BleManagement {
       console.log('connected');
       this.readData();
       this.isScanning = false;
-      if (this.onConnectCallback) {
+      if (!this.autoMacProbeActive && this.onConnectCallback) {
         this.onConnectCallback();
       }
     } else if (state.state === 0) { // 0 表示断开连接
@@ -186,13 +201,36 @@ export class BleManagement {
     this.connectedDevice = null;
 
     // 调用断开连接回调
-    if (this.onDisconnectCallback) {
+    if (!this.autoMacProbeActive && this.onDisconnectCallback) {
       try {
         this.onDisconnectCallback();
       } catch (error) {
         console.error('断开连接回调执行错误:', error);
       }
     }
+  }
+
+  private arrayBufferToHex(buffer: ArrayBuffer): string {
+    const bytes: Uint8Array = new Uint8Array(buffer);
+    let text: string = '';
+    for (let i: number = 0; i < bytes.length; i++) {
+      let hex: string = bytes[i].toString(16).toUpperCase();
+      if (hex.length < 2) {
+        hex = `0${hex}`;
+      }
+      text += i === 0 ? hex : ` ${hex}`;
+    }
+    return text;
+  }
+
+  private arrayBufferToPrintableAscii(buffer: ArrayBuffer): string {
+    const bytes: Uint8Array = new Uint8Array(buffer);
+    let text: string = '';
+    for (let i: number = 0; i < bytes.length; i++) {
+      const value: number = bytes[i];
+      text += value >= 32 && value <= 126 ? String.fromCharCode(value) : '.';
+    }
+    return text;
   }
 
   async checkDeviceName(): Promise<boolean> {
@@ -232,6 +270,9 @@ export class BleManagement {
 
     this.disposed = false;
     this.discoveredDevices = [];
+    this.autoMacProbeQueue = [];
+    this.autoMacProbeAttemptedNames.clear();
+    this.autoMacProbeActive = false;
     console.log("start scan wt901 devices");
 
     try {
@@ -252,6 +293,11 @@ export class BleManagement {
   }
 
   public stopDeviceScan(): void {
+    const wasAutoProbing: boolean = this.autoMacProbeActive;
+    this.cancelAutoMacProbe();
+    if (wasAutoProbing) {
+      this.closeConnectedDeviceSilently();
+    }
     this.stopScan();
   }
 
@@ -268,6 +314,7 @@ export class BleManagement {
     }
     for (let i: number = 0; i < scanResults.length; i++) {
       const item: ble.ScanResult = scanResults[i];
+      // console.log(`${JSON.stringify(scanResults[i])}`)
       try {
         const deviceName: string = item.deviceName ? item.deviceName.trim() : "";
         if (deviceName.length === 0 || !deviceName.toUpperCase().startsWith(WT901_DEVICE_PREFIX)) {
@@ -276,10 +323,12 @@ export class BleManagement {
         const discovered: BleDeviceItem = {
           deviceId: item.deviceId,
           deviceName: deviceName,
+          macAddress: this.macAddressByDeviceName.get(deviceName) ?? "",
           rssi: item.rssi,
           lastSeen: Date.now()
         };
         this.upsertDiscoveredDevice(discovered);
+        this.queueDeviceForMacProbe(discovered);
       } catch (error) {
         const itemError: BusinessError = error as BusinessError;
         console.error(`跳过异常蓝牙广播: deviceId=${item.deviceId}, code=${itemError.code}, message=${itemError.message}`);
@@ -323,7 +372,14 @@ export class BleManagement {
     for (let i: number = 0; i < this.discoveredDevices.length; i++) {
       const oldItem: BleDeviceItem = this.discoveredDevices[i];
       if (oldItem.deviceId === device.deviceId) {
-        devices.push(device);
+        const merged: BleDeviceItem = {
+          deviceId: device.deviceId,
+          deviceName: device.deviceName,
+          macAddress: oldItem.macAddress.length > 0 ? oldItem.macAddress : device.macAddress,
+          rssi: device.rssi,
+          lastSeen: device.lastSeen
+        };
+        devices.push(merged);
         updated = true;
       } else {
         devices.push(oldItem);
@@ -343,6 +399,7 @@ export class BleManagement {
       const copy: BleDeviceItem = {
         deviceId: item.deviceId,
         deviceName: item.deviceName,
+        macAddress: item.macAddress,
         rssi: item.rssi,
         lastSeen: item.lastSeen
       };
@@ -355,6 +412,133 @@ export class BleManagement {
     if (this.deviceDiscoveryUpdate) {
       this.deviceDiscoveryUpdate(this.copyDiscoveredDevices());
     }
+  }
+
+  private queueDeviceForMacProbe(device: BleDeviceItem): void {
+    if (device.macAddress.length > 0 || this.macAddressByDeviceName.has(device.deviceName) ||
+      this.autoMacProbeAttemptedNames.has(device.deviceName) ||
+      this.autoMacProbeDeviceName === device.deviceName) {
+      return;
+    }
+    for (let i: number = 0; i < this.autoMacProbeQueue.length; i++) {
+      if (this.autoMacProbeQueue[i].deviceName === device.deviceName) {
+        return;
+      }
+    }
+    this.autoMacProbeQueue.push(device);
+    if (!this.autoMacProbeActive && this.autoMacProbeStartTimer === undefined) {
+      this.autoMacProbeStartTimer = setTimeout(() => {
+        this.autoMacProbeStartTimer = undefined;
+        this.probeNextDeviceMac();
+      }, 1200);
+    }
+  }
+
+  private probeNextDeviceMac(): void {
+    if (this.disposed || this.autoMacProbeActive) {
+      return;
+    }
+    if (this.autoMacProbeQueue.length === 0) {
+      this.resumeScanAfterMacProbe();
+      return;
+    }
+    const device: BleDeviceItem | undefined = this.autoMacProbeQueue.shift();
+    if (!device) {
+      this.resumeScanAfterMacProbe();
+      return;
+    }
+    if (this.macAddressByDeviceName.has(device.deviceName)) {
+      this.probeNextDeviceMac();
+      return;
+    }
+
+    this.stopScan();
+    this.autoMacProbeActive = true;
+    this.autoMacProbeDeviceId = device.deviceId;
+    this.autoMacProbeDeviceName = device.deviceName;
+    this.autoMacProbeAttemptedNames.add(device.deviceName);
+    this.macQueryDeviceId = device.deviceId;
+    this.macQueryDeviceName = device.deviceName;
+    console.info(`[BLE_MAC_PROBE] connecting device=${device.deviceName}, id=${device.deviceId}`);
+    if (!this.tryConnect(device.deviceId)) {
+      this.finishAutoMacProbe(false);
+      return;
+    }
+    this.autoMacProbeTimeoutTimer = setTimeout(() => {
+      console.warn(`[BLE_MAC_PROBE] timeout device=${this.autoMacProbeDeviceName}`);
+      this.finishAutoMacProbe(false);
+    }, 15000);
+  }
+
+  private finishAutoMacProbe(success: boolean): void {
+    if (!this.autoMacProbeActive) {
+      return;
+    }
+    if (this.autoMacProbeTimeoutTimer !== undefined) {
+      clearTimeout(this.autoMacProbeTimeoutTimer);
+      this.autoMacProbeTimeoutTimer = undefined;
+    }
+    console.info(`[BLE_MAC_PROBE] finished device=${this.autoMacProbeDeviceName}, success=${success}`);
+    this.closeConnectedDeviceSilently();
+    this.autoMacProbeActive = false;
+    this.autoMacProbeDeviceId = "";
+    this.autoMacProbeDeviceName = "";
+    this.macQueryDeviceId = "";
+    this.macQueryDeviceName = "";
+    setTimeout(() => this.probeNextDeviceMac(), 350);
+  }
+
+  private resumeScanAfterMacProbe(): void {
+    if (this.disposed || this.isScanning || this.connectedDevice) {
+      return;
+    }
+    try {
+      if (!this.isDeviceFindListenerRegistered) {
+        ble.on('BLEDeviceFind', this.deviceFindCallback);
+        this.isDeviceFindListenerRegistered = true;
+      }
+      ble.startBLEScan(null);
+      this.isScanning = true;
+      console.info('[BLE_MAC_PROBE] all known devices processed, scan resumed');
+    } catch (error) {
+      console.error(`[BLE_MAC_PROBE] resume scan failed: ${JSON.stringify(error)}`);
+      this.isScanning = false;
+      this.removeDeviceFindListener();
+    }
+  }
+
+  private cancelAutoMacProbe(): void {
+    if (this.autoMacProbeStartTimer !== undefined) {
+      clearTimeout(this.autoMacProbeStartTimer);
+      this.autoMacProbeStartTimer = undefined;
+    }
+    if (this.autoMacProbeTimeoutTimer !== undefined) {
+      clearTimeout(this.autoMacProbeTimeoutTimer);
+      this.autoMacProbeTimeoutTimer = undefined;
+    }
+    this.autoMacProbeQueue = [];
+    this.autoMacProbeActive = false;
+    this.autoMacProbeDeviceId = "";
+    this.autoMacProbeDeviceName = "";
+  }
+
+  private closeConnectedDeviceSilently(): void {
+    if (!this.connectedDevice) {
+      return;
+    }
+    try {
+      this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);
+      if (this.characteristicChangeCallback) {
+        this.connectedDevice.off('BLECharacteristicChange', this.characteristicChangeCallback);
+        this.characteristicChangeCallback = null;
+      } else {
+        this.connectedDevice.off('BLECharacteristicChange');
+      }
+      this.connectedDevice.disconnect();
+    } catch (error) {
+      console.error(`[BLE_MAC_PROBE] disconnect failed: ${JSON.stringify(error)}`);
+    }
+    this.connectedDevice = null;
   }
 
   // 实现读取数据的核心方法
@@ -391,13 +575,20 @@ export class BleManagement {
         return;
       }
 
+      const writeCharacteristic = targetService.characteristics.find(char =>
+      char.characteristicUuid === '0000FFE9-0000-1000-8000-00805F9A34FB'
+      );
+
       // 4. 启用通知（假设数据通过通知发送）
-      this.enableNotifications(targetCharacteristic);
+      this.enableNotifications(targetCharacteristic, writeCharacteristic);
     });
   }
 
   // 启用特征通知
-  private enableNotifications(characteristic: ble.BLECharacteristic): void {
+  private enableNotifications(
+    characteristic: ble.BLECharacteristic,
+    writeCharacteristic: ble.BLECharacteristic | undefined
+  ): void {
     if (!this.connectedDevice) return;
 
     // 设置特征变化通知
@@ -414,13 +605,121 @@ export class BleManagement {
 
         this.characteristicChangeCallback = (changedChar: ble.BLECharacteristic) => {
           if (changedChar.characteristicUuid === characteristic.characteristicUuid) {
+            if (Date.now() <= this.macQueryLoggingUntil) {
+              const responseHex: string = this.arrayBufferToHex(changedChar.characteristicValue);
+              const responseAscii: string = this.arrayBufferToPrintableAscii(changedChar.characteristicValue);
+              console.info(`[BLE_MAC_QUERY] notify hex=${responseHex}, ascii=${responseAscii}`);
+            }
+            const macAddress: string = this.parseMacQueryResponse(changedChar.characteristicValue);
+            if (macAddress.length > 0) {
+              this.updateSelectedDeviceMac(macAddress);
+              return;
+            }
             this.handleReceivedData(changedChar.characteristicValue);
           }
         };
         this.connectedDevice!.off('BLECharacteristicChange');
         this.connectedDevice!.on('BLECharacteristicChange', this.characteristicChangeCallback);
+
+        if (writeCharacteristic) {
+          const queryDeviceName: string = this.macQueryDeviceName;
+          this.queryDeviceMacAddress(writeCharacteristic);
+          setTimeout(() => {
+            if (this.connectedDevice && this.macQueryDeviceName === queryDeviceName &&
+              !this.macAddressByDeviceName.has(queryDeviceName)) {
+              console.info(`[BLE_MAC_QUERY] retry device=${queryDeviceName}`);
+              this.queryDeviceMacAddress(writeCharacteristic);
+            }
+          }, 2500);
+        } else {
+          console.warn('[BLE_MAC_QUERY] FFE9 write characteristic not found');
+        }
       }
     );
+  }
+
+  private async queryDeviceMacAddress(writeCharacteristic: ble.BLECharacteristic): Promise<void> {
+    const client: ble.GattClientDevice | null = this.connectedDevice;
+    if (client === null) {
+      console.warn('[BLE_MAC_QUERY] skipped because GATT client is disconnected');
+      return;
+    }
+
+    const commandBuffer: ArrayBuffer = new ArrayBuffer(5);
+    const command: Uint8Array = new Uint8Array(commandBuffer);
+    command[0] = 0xFF;
+    command[1] = 0xAA;
+    command[2] = 0x27;
+    command[3] = 0x66;
+    command[4] = 0x00;
+    writeCharacteristic.characteristicValue = commandBuffer;
+    this.macQueryLoggingUntil = Date.now() + 3000;
+    console.info('[BLE_MAC_QUERY] write command=FF AA 27 66 00 to FFE9');
+    try {
+      await client.writeCharacteristicValue(
+        writeCharacteristic,
+        ble.GattWriteType.WRITE_NO_RESPONSE
+      );
+      console.info('[BLE_MAC_QUERY] write success, waiting for FFE4 response');
+    } catch (error) {
+      const writeError: BusinessError = error as BusinessError;
+      this.macQueryLoggingUntil = 0;
+      console.warn(`[BLE_MAC_QUERY] write failed: code=${writeError.code}, message=${writeError.message}`);
+    }
+  }
+
+  private parseMacQueryResponse(data: ArrayBuffer): string {
+    const bytes: Uint8Array = new Uint8Array(data);
+    for (let offset: number = 0; offset + 9 < bytes.length; offset++) {
+      if (bytes[offset] !== 0x55 || bytes[offset + 1] !== 0x71 ||
+        bytes[offset + 2] !== 0x66 || bytes[offset + 3] !== 0x00) {
+        continue;
+      }
+
+      const macParts: string[] = [];
+      for (let i: number = offset + 9; i >= offset + 4; i--) {
+        let hex: string = bytes[i].toString(16).toUpperCase();
+        if (hex.length < 2) {
+          hex = `0${hex}`;
+        }
+        macParts.push(hex);
+      }
+      return macParts.join(':');
+    }
+    return "";
+  }
+
+  private updateSelectedDeviceMac(macAddress: string): void {
+    const devices: BleDeviceItem[] = [];
+    let updated: boolean = false;
+    for (let i: number = 0; i < this.discoveredDevices.length; i++) {
+      const item: BleDeviceItem = this.discoveredDevices[i];
+      if (item.deviceId === this.macQueryDeviceId || item.deviceName === this.macQueryDeviceName) {
+        const resolved: BleDeviceItem = {
+          deviceId: item.deviceId,
+          deviceName: item.deviceName,
+          macAddress: macAddress,
+          rssi: item.rssi,
+          lastSeen: item.lastSeen
+        };
+        devices.push(resolved);
+        updated = true;
+      } else {
+        devices.push(item);
+      }
+    }
+    this.discoveredDevices = devices;
+    if (this.macQueryDeviceName.length > 0) {
+      this.macAddressByDeviceName.set(this.macQueryDeviceName, macAddress);
+    }
+    this.macQueryLoggingUntil = 0;
+    console.info(`[BLE_MAC_QUERY] resolved device=${this.macQueryDeviceName}, mac=${macAddress}`);
+    if (updated) {
+      this.notifyDeviceDiscovery();
+    }
+    if (this.autoMacProbeActive) {
+      this.finishAutoMacProbe(true);
+    }
   }
 
   // 处理接收到的数据
@@ -628,6 +927,7 @@ export class BleManagement {
   // 断开连接和清理
   public disconnect(): void {
     this.disposed = true;
+    this.cancelAutoMacProbe();
     this.stopScan();
     if (this.connectedDevice) {
       try {

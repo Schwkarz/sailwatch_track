@@ -21,8 +21,13 @@ import {
 } from '../utils/offlineTrainingStore'
 import {
   OnlineTrainingConfig,
-  OnlineTrainingConfigStore
+  OnlineTrainingConfigStore,
+  BlePreferenceMode
 } from '../utils/onlineTrainingConfigStore'
+import {
+  OfflineModeConfig,
+  OfflineModeConfigStore
+} from '../utils/offlineModeConfigStore'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -254,6 +259,7 @@ struct Index {
   @State isBleScanning: boolean = false;
   @State selectedBleDeviceName: string = '';
   @State selectedBleDeviceId: string = '';
+  @State selectedBleMac: string = '';
   @State bleScanStatus: string = '未扫描';
   @State isPermissionRequestCompleted: boolean = false;
   @State hasBluetoothPermission: boolean = false;
@@ -266,21 +272,27 @@ struct Index {
   @State hasRecentTiltData: boolean = false;
   @State offlineStatus: string = '未开始';
   @State offlineRecordTimer: number | undefined = undefined;
+  @State offlineTiltDisplayTimer: number | undefined = undefined;
   @State offlineLongPressTimer: number | undefined = undefined;
   @State isOfflineLongPressing: boolean = false;
   @State offlineLongPressProgress: number = 0;
   @State offlineReports: TrainingReportIndexItem[] = [];
   @State selectedReport: TrainingReport | null = null;
   @State pendingDeleteReportId: string = '';
+  @State offlineTiltAverageSeconds: number = 60;
 
   offlineStore: OfflineTrainingStore = new OfflineTrainingStore();
   onlineConfigStore: OnlineTrainingConfigStore = new OnlineTrainingConfigStore();
+  offlineModeConfigStore: OfflineModeConfigStore = new OfflineModeConfigStore();
   private hasSetupBleCallbacks: boolean = false;
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
   private recentTiltValues: number[] = [];
   private offlineLongPressDuration: number = 2000;
   private offlineStopCompletedByLongPress: boolean = false;
+  private blePreferenceMode: BlePreferenceMode = 'unconfigured';
+  private pendingPreferredBleMac: string = '';
+  private isChangingOfflineBle: boolean = false;
 
 
   @Builder
@@ -291,6 +303,8 @@ struct Index {
       this.bleDeviceSelectionBuilder('BleDeviceSelection')
     }else if (name == 'OfflineInterface') {
       this.offlineInterfaceBuilder('OfflineInterface')
+    }else if (name == 'OfflineSettings') {
+      this.offlineSettingsBuilder('OfflineSettings')
     }else if (name == 'OfflineHistory') {
       this.offlineHistoryBuilder('OfflineHistory')
     }else if (name == 'OfflineReportDetail') {
@@ -341,6 +355,22 @@ struct Index {
     this.hasSetupBleCallbacks = true;
     this.wtBLE.setDeviceDiscoveryCallback((devices: BleDeviceItem[]) => {
       this.bleDevices = devices;
+      for (let i: number = 0; i < devices.length; i++) {
+        const device: BleDeviceItem = devices[i];
+        if (device.deviceId === this.selectedBleDeviceId && device.macAddress.length > 0) {
+          this.selectedBleMac = device.macAddress;
+        }
+        if (this.pendingPreferredBleMac.length > 0 &&
+          device.macAddress.toUpperCase() === this.pendingPreferredBleMac.toUpperCase()) {
+          this.pendingPreferredBleMac = '';
+          this.selectedBleDeviceId = device.deviceId;
+          this.selectedBleDeviceName = device.deviceName;
+          this.selectedBleMac = device.macAddress;
+          this.bleScanStatus = `自动连接 ${device.deviceName}`;
+          this.wtBLE.connectDevice(device.deviceId, device.deviceName);
+          break;
+        }
+      }
       if (devices.length === 0) {
         this.bleScanStatus = this.isBleScanning ? '正在搜索 WT901' : '未发现设备';
       } else {
@@ -366,7 +396,13 @@ struct Index {
     const config: OnlineTrainingConfig | null = this.onlineConfigStore.read();
     if (config !== null) {
       this.applyOnlineTrainingConfig(config);
-      this.pushPage('BleDeviceSelection');
+      if (config.bleMode === 'unconfigured') {
+        this.pushPage('BleDeviceSelection');
+      } else {
+        this.pushPage('LoadInterface');
+        this.connectWatchMqtt();
+        this.applySavedBlePreference(config.bleMode, config.bleMac, config.bleName);
+      }
     } else {
       this.pushPage('WindInterfaceBuilder');
     }
@@ -383,6 +419,9 @@ struct Index {
     this.mygroup.data[0].mhmId = config.mhmId;
     this.mygroup.data[0].mhmName = config.mhmName;
     this.mygroup.data[0].color = config.groupColor;
+    this.blePreferenceMode = config.bleMode;
+    this.selectedBleMac = config.bleMac;
+    this.selectedBleDeviceName = config.bleName;
   }
 
   saveOnlineTrainingConfig(): void {
@@ -393,7 +432,10 @@ struct Index {
       groupId: this.selectedGroupId,
       mhmId: this.selectedmhmId,
       mhmName: this.selectedmhmName,
-      groupColor: this.selectedGroupColor
+      groupColor: this.selectedGroupColor,
+      bleMode: this.blePreferenceMode,
+      bleMac: this.selectedBleMac,
+      bleName: this.selectedBleDeviceName
     };
     try {
       this.onlineConfigStore.write(config);
@@ -406,6 +448,14 @@ struct Index {
     if (this.isStartUpload) {
       return;
     }
+    this.wtBLE.disconnect();
+    this.pendingPreferredBleMac = '';
+    this.selectedBleDeviceId = '';
+    this.selectedBleDeviceName = '';
+    this.selectedBleMac = '';
+    this.isbleConnected = false;
+    this.bleconnectionStatusColor = Color.Gray;
+    this.hasRecentTiltData = false;
     try {
       this.onlineConfigStore.clear();
       await this.mqttManager.disconnect();
@@ -421,13 +471,65 @@ struct Index {
     this.selectedmhmId = '';
     this.selectedmhmName = '';
     this.selectedGroupColor = '#000000';
+    this.blePreferenceMode = 'unconfigured';
+    this.selectedBleMac = '';
+    this.selectedBleDeviceName = '';
     this.pushPage('WindInterfaceBuilder');
   }
 
   selectOfflineMode(): void {
     this.appMode = APP_MODE_OFFLINE;
     windBoatsource = -1;
-    this.pushPage('BleDeviceSelection');
+    const config: OfflineModeConfig | null = this.offlineModeConfigStore.read();
+    if (config === null || config.bleMode === 'unconfigured') {
+      this.pushPage('BleDeviceSelection');
+      return;
+    }
+    this.applyOfflineModeConfig(config);
+    this.pushPage('OfflineInterface');
+    this.applySavedBlePreference(config.bleMode, config.bleMac, config.bleName);
+  }
+
+  applySavedBlePreference(mode: BlePreferenceMode, macAddress: string, deviceName: string): void {
+    this.blePreferenceMode = mode;
+    this.selectedBleDeviceName = deviceName;
+    this.selectedBleMac = macAddress;
+    this.selectedBleDeviceId = '';
+    this.pendingPreferredBleMac = '';
+    this.isbleConnected = false;
+    if (mode === 'skip') {
+      this.bleconnectionStatusColor = Color.Gray;
+      this.bleScanStatus = '已按配置跳过姿态传感器';
+      return;
+    }
+    if (mode === 'device' && macAddress.length > 0) {
+      this.bleconnectionStatusColor = Color.Red;
+      this.pendingPreferredBleMac = macAddress;
+      this.bleScanStatus = `正在查找 ${deviceName}`;
+      this.startBleDeviceScan();
+    }
+  }
+
+  applyOfflineModeConfig(config: OfflineModeConfig): void {
+    this.blePreferenceMode = config.bleMode;
+    this.selectedBleMac = config.bleMac;
+    this.selectedBleDeviceName = config.bleName;
+    this.offlineTiltAverageSeconds = config.tiltAverageSeconds;
+  }
+
+  saveOfflineModeConfig(): void {
+    const config: OfflineModeConfig = {
+      schemaVersion: 1,
+      bleMode: this.blePreferenceMode,
+      bleMac: this.selectedBleMac,
+      bleName: this.selectedBleDeviceName,
+      tiltAverageSeconds: this.offlineTiltAverageSeconds
+    };
+    try {
+      this.offlineModeConfigStore.write(config);
+    } catch (error) {
+      console.error(`保存离线模式配置失败: ${JSON.stringify(error)}`);
+    }
   }
 
   startBleDeviceScan(): void {
@@ -441,6 +543,14 @@ struct Index {
       this.isBleScanning = false;
       this.bleScanStatus = '未获得蓝牙权限';
       return;
+    }
+    if (this.wtBLE.isConnected()) {
+      this.wtBLE.disconnect();
+      this.selectedBleDeviceId = '';
+      this.isbleConnected = false;
+      this.bleconnectionStatusColor = Color.Red;
+      this.hasRecentTiltData = false;
+      this.bleScanStatus = '已断开原传感器，正在重新扫描';
     }
     this.bleDevices = [];
     this.bleScanStatus = '正在搜索 WT901';
@@ -459,6 +569,7 @@ struct Index {
   selectBleDevice(item: BleDeviceItem): void {
     this.selectedBleDeviceId = item.deviceId;
     this.selectedBleDeviceName = item.deviceName;
+    this.selectedBleMac = item.macAddress;
     this.isbleConnected = false;
     this.bleconnectionStatusColor = Color.Red;
     this.bleScanStatus = `连接 ${item.deviceName}`;
@@ -480,15 +591,24 @@ struct Index {
   }
 
   enterAfterBleSelected(): void {
-    if (this.selectedBleDeviceId.length === 0 || !this.isbleConnected) {
+    if (this.selectedBleDeviceId.length === 0 || !this.isbleConnected || this.selectedBleMac.length === 0) {
       return;
     }
+    this.blePreferenceMode = 'device';
     this.stopBleDeviceScan();
     if (this.appMode === APP_MODE_SERVER) {
+      this.saveOnlineTrainingConfig();
       this.pushPage('LoadInterface');
       this.connectWatchMqtt();
     } else if (this.appMode === APP_MODE_OFFLINE) {
-      this.pushPage('OfflineInterface');
+      this.saveOfflineModeConfig();
+      if (this.isChangingOfflineBle) {
+        this.isChangingOfflineBle = false;
+        this.popPage();
+        this.popPage();
+      } else {
+        this.pushPage('OfflineInterface');
+      }
     }
   }
 
@@ -500,15 +620,25 @@ struct Index {
     this.wtBLE.disconnect();
     this.selectedBleDeviceId = '';
     this.selectedBleDeviceName = '';
+    this.selectedBleMac = '';
+    this.blePreferenceMode = 'skip';
     this.isbleConnected = false;
     this.bleconnectionStatusColor = Color.Gray;
     this.hasRecentTiltData = false;
     this.bleScanStatus = '已跳过姿态传感器';
     if (this.appMode === APP_MODE_SERVER) {
+      this.saveOnlineTrainingConfig();
       this.pushPage('LoadInterface');
       this.connectWatchMqtt();
     } else {
-      this.pushPage('OfflineInterface');
+      this.saveOfflineModeConfig();
+      if (this.isChangingOfflineBle) {
+        this.isChangingOfflineBle = false;
+        this.popPage();
+        this.popPage();
+      } else {
+        this.pushPage('OfflineInterface');
+      }
     }
   }
 
@@ -518,6 +648,77 @@ struct Index {
     }
     this.refreshOfflineReports();
     this.pushPage('OfflineHistory');
+  }
+
+  openOfflineSettings(): void {
+    if (this.isOfflineRecording) {
+      return;
+    }
+    this.pushPage('OfflineSettings');
+  }
+
+  changeOfflineBleSensor(): void {
+    if (this.isOfflineRecording) {
+      return;
+    }
+    this.wtBLE.disconnect();
+    this.selectedBleDeviceId = '';
+    this.selectedBleDeviceName = '';
+    this.selectedBleMac = '';
+    this.isbleConnected = false;
+    this.bleconnectionStatusColor = Color.Red;
+    this.isChangingOfflineBle = true;
+    this.pushPage('BleDeviceSelection');
+  }
+
+  setOfflineTiltAverageSeconds(seconds: number): void {
+    if (seconds !== 1 && seconds !== 30 && seconds !== 60) {
+      return;
+    }
+    this.offlineTiltAverageSeconds = seconds;
+    this.recentTiltValues = [];
+    this.recentTiltAverage = 0;
+    this.hasRecentTiltData = false;
+    this.saveOfflineModeConfig();
+  }
+
+  getOfflineTiltWindowText(): string {
+    if (this.offlineTiltAverageSeconds === 1) {
+      return '实时';
+    }
+    if (this.offlineTiltAverageSeconds === 30) {
+      return '30s';
+    }
+    return '1min';
+  }
+
+  startOfflineTiltDisplay(): void {
+    this.stopOfflineTiltDisplay();
+    this.refreshOfflineTiltDisplay();
+    this.offlineTiltDisplayTimer = setInterval(() => {
+      this.refreshOfflineTiltDisplay();
+    }, 1000);
+  }
+
+  stopOfflineTiltDisplay(): void {
+    if (this.offlineTiltDisplayTimer !== undefined) {
+      clearInterval(this.offlineTiltDisplayTimer);
+      this.offlineTiltDisplayTimer = undefined;
+    }
+  }
+
+  refreshOfflineTiltDisplay(): void {
+    if (this.isOfflineRecording) {
+      return;
+    }
+    if (this.isOfflineSensorDataAvailable(Date.now())) {
+      this.updateRecentTiltAverage(this.wtBLE.ble_sensorData.angle.roll);
+      this.hasRecentTiltData = true;
+    } else {
+      this.recentTiltValues = [];
+      this.recentTiltAverage = 0;
+      this.hasRecentTiltData = false;
+    }
   }
 
   refreshOfflineReports(): void {
@@ -666,7 +867,7 @@ struct Index {
                       .fontWeight(FontWeight.Medium)
                       .fontColor(Color.White)
                       .maxLines(1)
-                    Text(item.deviceId)
+                    Text(item.macAddress.length > 0 ? `MAC ${item.macAddress}` : '')
                       .fontSize(8)
                       .fontColor(Color.Gray)
                       .maxLines(1)
@@ -757,7 +958,7 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .margin({ bottom: 5 })
 
-        Button('历史记录')
+        Button('菜单')
           .fontSize(10)
           .type(ButtonType.Capsule)
           .backgroundColor(this.isOfflineRecording ? 0x333333 : 0x555555)
@@ -766,7 +967,7 @@ struct Index {
           .height(25)
           .enabled(!this.isOfflineRecording)
           .opacity(this.isOfflineRecording ? 0.45 : 1)
-          .onClick(() => this.openOfflineHistory())
+          .onClick(() => this.openOfflineSettings())
 
         Text(`${(this.speed * 1.94).toFixed(1)}`)
           .fontSize(80)
@@ -778,7 +979,7 @@ struct Index {
           Text(formatDuration(this.offlineElapsedSeconds))
             .fontSize(9)
             .fontColor(Color.White)
-          Text(`近1分均倾 ${this.hasRecentTiltData ? this.formatSignedAngle(this.recentTiltAverage) : '---'}`)
+          Text(`${this.getOfflineTiltWindowText()}均倾 ${this.hasRecentTiltData ? this.formatSignedAngle(this.recentTiltAverage) : '---'}`)
             .fontSize(9)
             .fontColor(0x9fc7ff)
           Text(`心率 ${this.heartRate}`)
@@ -828,7 +1029,79 @@ struct Index {
       .backgroundColor(0x000000)
     }
     .hideTitleBar(true)
+    .onAppear(() => this.startOfflineTiltDisplay())
+    .onDisAppear(() => this.stopOfflineTiltDisplay())
     .onBackPressed(() => true)
+  }
+
+  @Builder
+  offlineSettingsBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('离线设置')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .margin({ bottom: 18 })
+
+        Button('蓝牙传感器连接')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x317aff)
+          .fontColor(Color.White)
+          .width(150)
+          .height(36)
+          .margin({ bottom: 14 })
+          .onClick(() => this.changeOfflineBleSensor())
+
+        Text(`平均倾角时间：${this.getOfflineTiltWindowText()}`)
+          .fontSize(11)
+          .fontColor(0x9fc7ff)
+          .margin({ bottom: 7 })
+
+        Row() {
+          Button('实时')
+            .fontSize(10)
+            .backgroundColor(this.offlineTiltAverageSeconds === 1 ? 0x2f9b67 : 0x555555)
+            .width(55)
+            .height(28)
+            .onClick(() => this.setOfflineTiltAverageSeconds(1))
+          Button('30s')
+            .fontSize(10)
+            .backgroundColor(this.offlineTiltAverageSeconds === 30 ? 0x2f9b67 : 0x555555)
+            .width(55)
+            .height(28)
+            .margin({ left: 5, right: 5 })
+            .onClick(() => this.setOfflineTiltAverageSeconds(30))
+          Button('1min')
+            .fontSize(10)
+            .backgroundColor(this.offlineTiltAverageSeconds === 60 ? 0x2f9b67 : 0x555555)
+            .width(55)
+            .height(28)
+            .onClick(() => this.setOfflineTiltAverageSeconds(60))
+        }
+        .margin({ bottom: 16 })
+
+        Button('查看历史报告')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(36)
+          .onClick(() => this.openOfflineHistory())
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      this.popPage();
+      return true;
+    })
   }
 
   @Builder
@@ -1683,7 +1956,7 @@ struct Index {
 
   updateRecentTiltAverage(roll: number): void {
     this.recentTiltValues.push(roll);
-    while (this.recentTiltValues.length > 60) {
+    while (this.recentTiltValues.length > this.offlineTiltAverageSeconds) {
       this.recentTiltValues.shift();
     }
     let total: number = 0;
@@ -1897,6 +2170,7 @@ struct Index {
     try {
       this.offlineStore.setup(this.getAbilityContext().filesDir);
       this.onlineConfigStore.setup(this.getAbilityContext().filesDir);
+      this.offlineModeConfigStore.setup(this.getAbilityContext().filesDir);
       this.refreshOfflineReports();
     } catch (error) {
       console.error(`初始化离线存储失败: ${JSON.stringify(error)}`);

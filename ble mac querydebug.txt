@@ -1,0 +1,76 @@
+I     Ability onCreate
+I     Ability onWindowStageCreate
+I     Ability onForeground
+I     Succeeded in loading the content.
+I     启动定时监测，间隔: 3000ms
+I     权限 ohos.permission.READ_HEALTH_DATA 被通过
+I     权限 ohos.permission.LOCATION 被通过
+I     权限 ohos.permission.APPROXIMATELY_LOCATION 被通过
+I     权限 ohos.permission.ACCELEROMETER 被通过
+I     权限 ohos.permission.INTERNET 被通过
+I     权限 ohos.permission.ACCESS_BLUETOOTH 被通过
+I     权限 ohos.permission.DISCOVER_BLUETOOTH 被通过
+I     权限 ohos.permission.USE_BLUETOOTH 被通过
+I     权限 ohos.permission.KEEP_BACKGROUND_RUNNING 被通过
+I     所有权限已授权,开始监测
+I     requestEnableNotification success
+I     start scan wt901 devices
+I     try connect
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     connected
+I     Notifications enabled
+I     [BLE_MAC_QUERY] write command=FF AA 27 66 00 to FFE9
+I     [BLE_MAC_QUERY] write success, waiting for FFE4 response
+I     [BLE_MAC_QUERY] notify hex=55 61 F8 FF FA FF FC 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 71 66 00 41 38 B8 5A C7 F5 00 00 01 00 C8 00 ED 03 F4 01, ascii=Uqf.A8.Z............
+E     无效的标志位，期望0x61，实际收到: 71
+I     [BLE_MAC_QUERY] notify hex=55 61 F8 FF FC FF FE 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FB FF FF 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F7 FF FE FF FF 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FB FF FD FF FF 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FB FF FF 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF FD FF 03 08 FD FF 00 00 00 00 EE FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FB FF FC FF FD 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FC FF FB 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FC FF FC FF FC 07 00 00 00 00 00 00 ED FF 21 00 6A F2, ascii=Ua..............!.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FB FF FA FF FE 07 00 00 00 00 00 00 ED FF 22 00 6A F2, ascii=Ua..............".j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F8 FF FC FF FD 07 00 00 00 00 00 00 EC FF 22 00 6A F2, ascii=Ua..............".j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FF FF FC 07 00 00 00 00 00 00 EC FF 22 00 6A F2, ascii=Ua..............".j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F8 FF FD FF FE 07 00 00 00 00 00 00 EC FF 22 00 6A F2, ascii=Ua..............".j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF FB FF 00 08 00 00 00 00 00 00 EC FF 23 00 6A F2, ascii=Ua..............#.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FB FF FD FF FD 07 00 00 00 00 00 00 EC FF 23 00 6A F2, ascii=Ua..............#.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FC FF FB 07 00 00 00 00 00 00 EC FF 23 00 6A F2, ascii=Ua..............#.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F8 FF FC FF FD 07 00 00 FF FF 00 00 EC FF 24 00 6A F2, ascii=Ua..............$.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF FE FF FC 07 00 00 00 00 00 00 EC FF 24 00 6A F2, ascii=Ua..............$.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF FD FF FB 07 01 00 00 00 00 00 EC FF 24 00 6A F2, ascii=Ua..............$.j.
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     [BLE_MAC_QUERY] notify hex=55 61 FB FF 01 00 FF 07 FF FF 00 00 00 00 EC FF 24 00 6A F2, ascii=Ua..............$.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF 00 00 FF 07 00 00 00 00 00 00 EC FF 24 00 6A F2, ascii=Ua..............$.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FD FF FD 07 00 00 00 00 00 00 EC FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FC FF FD 07 00 00 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F8 FF FC FF FB 07 00 00 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FE FF FB 07 FF FF 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FA FF FC FF FE 07 00 00 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF FE FF FF 07 00 00 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 F9 FF FC FF FB 07 00 00 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     [BLE_MAC_QUERY] notify hex=55 61 FB FF FD FF FC 07 00 00 00 00 00 00 EB FF 25 00 6A F2, ascii=Ua..............%.j.
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
+I     getDeviceName: WT901BLE67
+E     蓝牙已连接
