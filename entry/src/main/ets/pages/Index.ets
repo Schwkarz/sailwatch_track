@@ -19,6 +19,10 @@ import {
   TrainingReport,
   TrainingReportIndexItem
 } from '../utils/offlineTrainingStore'
+import {
+  OnlineTrainingConfig,
+  OnlineTrainingConfigStore
+} from '../utils/onlineTrainingConfigStore'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -156,7 +160,7 @@ function startTimerNotification(interval: number = 1000): number {
         console.error('no displaydata')
         return;
       }
-      console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data[0].state)}`);
+      // console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data[0].state)}`);
     });
 
 
@@ -267,8 +271,10 @@ struct Index {
   @State offlineLongPressProgress: number = 0;
   @State offlineReports: TrainingReportIndexItem[] = [];
   @State selectedReport: TrainingReport | null = null;
+  @State pendingDeleteReportId: string = '';
 
   offlineStore: OfflineTrainingStore = new OfflineTrainingStore();
+  onlineConfigStore: OnlineTrainingConfigStore = new OnlineTrainingConfigStore();
   private hasSetupBleCallbacks: boolean = false;
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
@@ -357,6 +363,64 @@ struct Index {
 
   selectServerMode(): void {
     this.appMode = APP_MODE_SERVER;
+    const config: OnlineTrainingConfig | null = this.onlineConfigStore.read();
+    if (config !== null) {
+      this.applyOnlineTrainingConfig(config);
+      this.pushPage('BleDeviceSelection');
+    } else {
+      this.pushPage('WindInterfaceBuilder');
+    }
+  }
+
+  applyOnlineTrainingConfig(config: OnlineTrainingConfig): void {
+    windBoatsource = config.windBoatSource;
+    this.selectedLevelId = config.levelId;
+    this.selectedGroupId = config.groupId;
+    this.selectedmhmId = config.mhmId;
+    this.selectedmhmName = config.mhmName;
+    this.selectedGroupColor = config.groupColor;
+    this.mygroup.data[0].groupId = config.groupId;
+    this.mygroup.data[0].mhmId = config.mhmId;
+    this.mygroup.data[0].mhmName = config.mhmName;
+    this.mygroup.data[0].color = config.groupColor;
+  }
+
+  saveOnlineTrainingConfig(): void {
+    const config: OnlineTrainingConfig = {
+      schemaVersion: 1,
+      windBoatSource: windBoatsource,
+      levelId: this.selectedLevelId,
+      groupId: this.selectedGroupId,
+      mhmId: this.selectedmhmId,
+      mhmName: this.selectedmhmName,
+      groupColor: this.selectedGroupColor
+    };
+    try {
+      this.onlineConfigStore.write(config);
+    } catch (error) {
+      console.error(`保存在线训练配置失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  async openOnlineSettings(): Promise<void> {
+    if (this.isStartUpload) {
+      return;
+    }
+    try {
+      this.onlineConfigStore.clear();
+      await this.mqttManager.disconnect();
+      this.mqttManager.clearSubscriptions();
+    } catch (error) {
+      console.error(`重置在线训练配置失败: ${JSON.stringify(error)}`);
+    }
+    this.isConnected = false;
+    this.connectionStatusColor = Color.Gray;
+    windBoatsource = -1;
+    this.selectedLevelId = '';
+    this.selectedGroupId = '';
+    this.selectedmhmId = '';
+    this.selectedmhmName = '';
+    this.selectedGroupColor = '#000000';
     this.pushPage('WindInterfaceBuilder');
   }
 
@@ -429,7 +493,7 @@ struct Index {
   }
 
   skipBleConnection(): void {
-    if (this.appMode !== APP_MODE_OFFLINE) {
+    if (this.appMode !== APP_MODE_SERVER && this.appMode !== APP_MODE_OFFLINE) {
       return;
     }
     this.stopBleDeviceScan();
@@ -440,7 +504,12 @@ struct Index {
     this.bleconnectionStatusColor = Color.Gray;
     this.hasRecentTiltData = false;
     this.bleScanStatus = '已跳过姿态传感器';
-    this.pushPage('OfflineInterface');
+    if (this.appMode === APP_MODE_SERVER) {
+      this.pushPage('LoadInterface');
+      this.connectWatchMqtt();
+    } else {
+      this.pushPage('OfflineInterface');
+    }
   }
 
   openOfflineHistory(): void {
@@ -465,6 +534,21 @@ struct Index {
     if (report) {
       this.selectedReport = report;
       this.pushPage('OfflineReportDetail');
+    }
+  }
+
+  requestDeleteOfflineReport(id: string): void {
+    if (this.pendingDeleteReportId !== id) {
+      this.pendingDeleteReportId = id;
+      return;
+    }
+    const deleted: boolean = this.offlineStore.deleteReport(id);
+    this.pendingDeleteReportId = '';
+    if (deleted) {
+      if (this.selectedReport !== null && this.selectedReport.id === id) {
+        this.selectedReport = null;
+      }
+      this.refreshOfflineReports();
     }
   }
 
@@ -546,7 +630,7 @@ struct Index {
 
         Row() {
           Button(this.isBleScanning ? '扫描中' : '扫描')
-            .fontSize(11)
+            .fontSize(13)
             .type(ButtonType.Capsule)
             .backgroundColor(0x317aff)
             .fontColor(Color.White)
@@ -556,7 +640,7 @@ struct Index {
             .onClick(() => this.startBleDeviceScan())
 
           Button('停止')
-            .fontSize(11)
+            .fontSize(13)
             .type(ButtonType.Capsule)
             .backgroundColor(0x555555)
             .fontColor(Color.White)
@@ -617,21 +701,19 @@ struct Index {
             .type(ButtonType.Capsule)
             .backgroundColor(this.isbleConnected ? 0x2f9b67 : 0x555555)
             .fontColor(Color.White)
-            .width(104)
-            .height(34)
+            .width(76)
+            .height(28)
             .onClick(() => this.enterAfterBleSelected())
 
-          if (this.appMode === APP_MODE_OFFLINE) {
-            Button('跳过')
-              .fontSize(13)
-              .type(ButtonType.Capsule)
-              .backgroundColor(0x555555)
-              .fontColor(Color.White)
-              .width(72)
-              .height(34)
-              .margin({ left: 8 })
-              .onClick(() => this.skipBleConnection())
-          }
+          Button('跳过')
+            .fontSize(13)
+            .type(ButtonType.Capsule)
+            .backgroundColor(0x555555)
+            .fontColor(Color.White)
+            .width(62)
+            .height(28)
+            .margin({ left: 6 })
+            .onClick(() => this.skipBleConnection())
         }
         .justifyContent(FlexAlign.Center)
         .margin({ top: 4, bottom: 2 })
@@ -768,23 +850,37 @@ struct Index {
           Scroll() {
             Column() {
               ForEach(this.offlineReports, (item: TrainingReportIndexItem) => {
-                Column() {
-                  Text(formatShortDateTime(item.startedAt))
-                    .fontSize(13)
+                Row() {
+                  Column() {
+                    Text(formatShortDateTime(item.startedAt))
+                      .fontSize(13)
+                      .fontColor(Color.White)
+                      .maxLines(1)
+                    Text(`${formatDuration(item.durationSec)}  均心 ${item.averageHeartRate}`)
+                      .fontSize(11)
+                      .fontColor(Color.Gray)
+                  }
+                  .layoutWeight(1)
+                  .height(52)
+                  .justifyContent(FlexAlign.Center)
+                  .alignItems(HorizontalAlign.Center)
+                  .onClick(() => this.openOfflineReport(item.id))
+
+                  Button(this.pendingDeleteReportId === item.id ? '确认' : '删除')
+                    .fontSize(10)
+                    .type(ButtonType.Capsule)
+                    .backgroundColor(this.pendingDeleteReportId === item.id ? 0xff3030 : 0x7a3030)
                     .fontColor(Color.White)
-                    .maxLines(1)
-                  Text(`${formatDuration(item.durationSec)}  均心 ${item.averageHeartRate}`)
-                    .fontSize(11)
-                    .fontColor(Color.Gray)
+                    .width(52)
+                    .height(28)
+                    .margin({ right: 6 })
+                    .onClick(() => this.requestDeleteOfflineReport(item.id))
                 }
                 .width('92%')
-                .height(52)
-                .justifyContent(FlexAlign.Center)
-                .alignItems(HorizontalAlign.Center)
+                .height(58)
                 .backgroundColor(0x222222)
                 .borderRadius(8)
                 .margin({ bottom: 8 })
-                .onClick(() => this.openOfflineReport(item.id))
               })
             }
             .width('100%')
@@ -801,7 +897,10 @@ struct Index {
       .backgroundColor(0x000000)
     }
     .hideTitleBar(true)
-    .onAppear(() => this.refreshOfflineReports())
+    .onAppear(() => {
+      this.pendingDeleteReportId = '';
+      this.refreshOfflineReports();
+    })
     .onBackPressed(() => {
       this.popPage();
       return true;
@@ -952,7 +1051,8 @@ struct Index {
     .backgroundColor(Color.Black)
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
-    .onBackPressed(()=>{
+    .onBackPressed(() => {
+      this.popPage();  // 允许返回上一页
       return true;
     })
   }
@@ -1113,7 +1213,7 @@ struct Index {
             .margin({ left: 5 })
         }
         .justifyContent(FlexAlign.Center)
-        .margin({ top: 15, bottom: 10 })
+        .margin({ top: 15, bottom: 5 })
 
         // 船名信息
         Text(`${this.selectedmhmName} : ${windBoatsource}`)
@@ -1121,13 +1221,25 @@ struct Index {
           .fontColor(Color.Gray)
           .margin({ bottom: 5 })
 
+        Button('重新设置')
+          .fontSize(9)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.isStartUpload ? 0x333333 : 0x555555)
+          .fontColor(Color.White)
+          .width(68)
+          .height(20)
+          .enabled(!this.isStartUpload)
+          .opacity(this.isStartUpload ? 0.45 : 1)
+          .margin({ bottom: 3 })
+          .onClick(() => this.openOnlineSettings())
+
         // 速度显示
         Text(`${(this.speed * 1.94).toFixed(1)}`)
           .fontSize(80)
           .fontWeight(FontWeight.Medium)
           .fontColor(Color.White)
           .textAlign(TextAlign.Center)
-          .margin({ bottom: 20 })
+          .margin({ bottom: 3 })
 
         // 上传按钮区域
         Column() {
@@ -1769,6 +1881,8 @@ struct Index {
     this.mygroup.data[0].mhmName = mhmName;
     this.mygroup.data[0].color = groupColor;
 
+    this.saveOnlineTrainingConfig();
+
     // 切换到主界面 - 使用正确的方法名
     this.pushPage('BleDeviceSelection');
   }
@@ -1782,6 +1896,7 @@ struct Index {
     this.setupBleCallbacks();
     try {
       this.offlineStore.setup(this.getAbilityContext().filesDir);
+      this.onlineConfigStore.setup(this.getAbilityContext().filesDir);
       this.refreshOfflineReports();
     } catch (error) {
       console.error(`初始化离线存储失败: ${JSON.stringify(error)}`);

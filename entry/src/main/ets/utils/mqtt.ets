@@ -566,6 +566,10 @@ export class MqttManagement {
     }
   }
 
+  clearSubscriptions(): void {
+    this.subscriptions = [];
+  }
+
   /**
    * 获取连接信息（用于调试）
    */

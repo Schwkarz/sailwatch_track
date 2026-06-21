@@ -229,6 +229,31 @@ export class OfflineTrainingStore {
     }
   }
 
+  public deleteReport(id: string): boolean {
+    this.ensureStorage();
+    const rawPath: string = this.getRawPath(id);
+    const reportPath: string = this.getReportPath(id);
+    try {
+      this.deleteIfExists(rawPath);
+      this.deleteIfExists(reportPath);
+
+      const indexFile: TrainingReportIndexFile = this.readIndex();
+      const remainingReports: TrainingReportIndexItem[] = [];
+      for (let i: number = 0; i < indexFile.reports.length; i++) {
+        if (indexFile.reports[i].id !== id) {
+          remainingReports.push(indexFile.reports[i]);
+        }
+      }
+      indexFile.reports = remainingReports;
+      indexFile.schemaVersion = SCHEMA_VERSION;
+      this.writeText(this.indexPath, JSON.stringify(indexFile));
+      return true;
+    } catch (error) {
+      console.error(`delete offline report failed: ${JSON.stringify(error)}`);
+      return false;
+    }
+  }
+
   private ensureStorage(): void {
     if (this.recordsDir.length === 0) {
       return;
@@ -257,6 +282,12 @@ export class OfflineTrainingStore {
       return fileIo.accessSync(path);
     } catch (error) {
       return false;
+    }
+  }
+
+  private deleteIfExists(path: string): void {
+    if (this.pathExists(path)) {
+      fileIo.unlinkSync(path);
     }
   }
 
