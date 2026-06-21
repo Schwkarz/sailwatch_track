@@ -1,7 +1,8 @@
 import { fileIo } from '@kit.CoreFileKit';
 
-const SCHEMA_VERSION: number = 1;
-const MAX_CHART_POINTS: number = 120;
+const SCHEMA_VERSION: number = 3;
+const MAX_CHART_POINTS: number = 3600;
+const CHART_SAMPLE_INTERVAL_SEC: number = 5;
 
 export interface OfflineVector3 {
   x: number;
@@ -35,17 +36,12 @@ export interface OfflineRawSample {
   timestamp: number;
   heartRate: number;
   gps: OfflineGpsSample;
-  imu: OfflineImuSample;
+  imu: OfflineImuSample | string;
 }
 
 export interface ChartPoint {
   offsetSec: number;
   value: number;
-}
-
-export interface GpsPoint {
-  longitude: number;
-  latitude: number;
 }
 
 export interface TrainingReport {
@@ -58,10 +54,12 @@ export interface TrainingReport {
   averageHeartRate: number;
   maxHeartRate: number;
   minHeartRate: number;
+  averageTilt: number;
+  maxTilt: number;
   distanceMeter: number;
   rawDataPath: string;
   heartSeries: ChartPoint[];
-  gpsTrack: GpsPoint[];
+  tiltSeries: ChartPoint[];
 }
 
 export interface TrainingReportIndexItem {
@@ -88,11 +86,14 @@ interface OfflineSessionState {
   heartCount: number;
   maxHeartRate: number;
   minHeartRate: number;
+  tiltSum: number;
+  tiltCount: number;
+  maxTilt: number;
   distanceMeter: number;
   lastLongitude: number | null;
   lastLatitude: number | null;
   heartSeries: ChartPoint[];
-  gpsTrack: GpsPoint[];
+  tiltSeries: ChartPoint[];
 }
 
 export class OfflineTrainingStore {
@@ -129,11 +130,14 @@ export class OfflineTrainingStore {
       heartCount: 0,
       maxHeartRate: 0,
       minHeartRate: 0,
+      tiltSum: 0,
+      tiltCount: 0,
+      maxTilt: 0,
       distanceMeter: 0,
       lastLongitude: null,
       lastLatitude: null,
       heartSeries: [],
-      gpsTrack: []
+      tiltSeries: []
     };
     this.currentSession = session;
     return id;
@@ -147,6 +151,7 @@ export class OfflineTrainingStore {
     this.appendText(this.currentSession.rawDataPath, `${JSON.stringify(sample)}\n`);
     this.currentSession.sampleCount += 1;
     this.updateHeartStats(sample);
+    this.updateTiltStats(sample);
     this.updateGpsStats(sample);
   }
 
@@ -160,6 +165,8 @@ export class OfflineTrainingStore {
     const durationSec: number = Math.floor((safeEndedAt - session.startedAt) / 1000);
     const averageHeartRate: number = session.heartCount > 0 ? Math.round(session.heartSum / session.heartCount) : 0;
     const minHeartRate: number = session.heartCount > 0 ? session.minHeartRate : 0;
+    const averageTilt: number = session.tiltCount > 0 ?
+      Math.round(session.tiltSum / session.tiltCount * 10) / 10 : 0;
 
     const report: TrainingReport = {
       schemaVersion: SCHEMA_VERSION,
@@ -171,15 +178,17 @@ export class OfflineTrainingStore {
       averageHeartRate: averageHeartRate,
       maxHeartRate: session.maxHeartRate,
       minHeartRate: minHeartRate,
+      averageTilt: averageTilt,
+      maxTilt: Math.round(session.maxTilt * 10) / 10,
       distanceMeter: Math.round(session.distanceMeter),
       rawDataPath: session.rawDataPath,
       heartSeries: session.heartSeries,
-      gpsTrack: session.gpsTrack
+      tiltSeries: session.tiltSeries
     };
 
+    this.currentSession = null;
     this.writeText(this.getReportPath(session.id), JSON.stringify(report));
     this.addReportToIndex(report);
-    this.currentSession = null;
     return report;
   }
 
@@ -197,7 +206,23 @@ export class OfflineTrainingStore {
 
     try {
       const text: string = fileIo.readTextSync(reportPath);
-      return JSON.parse(text) as TrainingReport;
+      const report: TrainingReport = JSON.parse(text) as TrainingReport;
+      if (!report.heartSeries) {
+        report.heartSeries = [];
+      }
+      if (!report.tiltSeries) {
+        report.tiltSeries = [];
+      }
+      if (report.averageTilt === undefined) {
+        report.averageTilt = 0;
+      }
+      if (report.maxTilt === undefined) {
+        report.maxTilt = 0;
+      }
+      if (report.schemaVersion < SCHEMA_VERSION && report.tiltSeries.length > 0) {
+        this.restoreSignedTiltStats(report);
+      }
+      return report;
     } catch (error) {
       console.error(`read offline report failed: ${JSON.stringify(error)}`);
       return null;
@@ -285,6 +310,7 @@ export class OfflineTrainingStore {
 
   private addReportToIndex(report: TrainingReport): void {
     const indexFile: TrainingReportIndexFile = this.readIndex();
+    indexFile.schemaVersion = SCHEMA_VERSION;
     const item: TrainingReportIndexItem = {
       id: report.id,
       startedAt: report.startedAt,
@@ -342,25 +368,65 @@ export class OfflineTrainingStore {
     }
     session.lastLongitude = longitude;
     session.lastLatitude = latitude;
-
-    const point: GpsPoint = {
-      longitude: longitude,
-      latitude: latitude
-    };
-    this.pushLimitedGpsPoint(session, point);
   }
 
   private pushLimitedHeartPoint(session: OfflineSessionState, point: ChartPoint): void {
+    if (session.heartSeries.length > 0) {
+      const lastPoint: ChartPoint = session.heartSeries[session.heartSeries.length - 1];
+      if (point.offsetSec - lastPoint.offsetSec < CHART_SAMPLE_INTERVAL_SEC) {
+        return;
+      }
+    }
     session.heartSeries.push(point);
     while (session.heartSeries.length > MAX_CHART_POINTS) {
       session.heartSeries.shift();
     }
   }
 
-  private pushLimitedGpsPoint(session: OfflineSessionState, point: GpsPoint): void {
-    session.gpsTrack.push(point);
-    while (session.gpsTrack.length > MAX_CHART_POINTS) {
-      session.gpsTrack.shift();
+  private updateTiltStats(sample: OfflineRawSample): void {
+    const imu: OfflineImuSample | string = sample.imu;
+    if (typeof imu === 'string') {
+      return;
+    }
+    const roll: number = imu.angle.roll;
+    const session: OfflineSessionState = this.currentSession as OfflineSessionState;
+    session.tiltSum += roll;
+    session.tiltCount += 1;
+    if (Math.abs(roll) > Math.abs(session.maxTilt)) {
+      session.maxTilt = roll;
+    }
+
+    const point: ChartPoint = {
+      offsetSec: Math.floor((sample.timestamp - session.startedAt) / 1000),
+      value: roll
+    };
+    this.pushLimitedTiltPoint(session, point);
+  }
+
+  private restoreSignedTiltStats(report: TrainingReport): void {
+    let tiltSum: number = 0;
+    let peakTilt: number = 0;
+    for (let i: number = 0; i < report.tiltSeries.length; i++) {
+      const tilt: number = report.tiltSeries[i].value;
+      tiltSum += tilt;
+      if (Math.abs(tilt) > Math.abs(peakTilt)) {
+        peakTilt = tilt;
+      }
+    }
+    report.averageTilt = Math.round(tiltSum / report.tiltSeries.length * 10) / 10;
+    report.maxTilt = Math.round(peakTilt * 10) / 10;
+  }
+
+  private pushLimitedTiltPoint(session: OfflineSessionState, point: ChartPoint): void {
+    if (session.tiltSeries.length > 0) {
+      const lastPoint: ChartPoint = session.tiltSeries[session.tiltSeries.length - 1];
+      if (point.offsetSec - lastPoint.offsetSec < CHART_SAMPLE_INTERVAL_SEC) {
+        return;
+      }
+    }
+    session.tiltSeries.push(point);
+    while (session.tiltSeries.length > MAX_CHART_POINTS) {
+      session.tiltSeries.shift();
     }
   }
 

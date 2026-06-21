@@ -15,6 +15,7 @@ import {
   OfflineTrainingStore,
   OfflineRawSample,
   OfflineImuSample,
+  ChartPoint,
   TrainingReport,
   TrainingReportIndexItem
 } from '../utils/offlineTrainingStore'
@@ -89,18 +90,6 @@ interface ITestResult {
 interface uploadCap {
   payload: string;
   timestamp: number;
-}
-
-interface ChartBar {
-  id: string;
-  height: number;
-  value: number;
-}
-
-interface PlotPoint {
-  id: string;
-  x: number;
-  y: number;
 }
 
 // 数据生成工具（手表端）
@@ -269,6 +258,8 @@ struct Index {
   @State offlineButtonString: string = '开始';
   @State offlineSampleCount: number = 0;
   @State offlineElapsedSeconds: number = 0;
+  @State recentTiltAverage: number = 0;
+  @State hasRecentTiltData: boolean = false;
   @State offlineStatus: string = '未开始';
   @State offlineRecordTimer: number | undefined = undefined;
   @State offlineLongPressTimer: number | undefined = undefined;
@@ -281,6 +272,7 @@ struct Index {
   private hasSetupBleCallbacks: boolean = false;
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
+  private recentTiltValues: number[] = [];
   private offlineLongPressDuration: number = 2000;
   private offlineStopCompletedByLongPress: boolean = false;
 
@@ -358,6 +350,7 @@ struct Index {
     this.wtBLE.setOnDisconnectCallback(() => {
       this.isbleConnected = false;
       this.bleconnectionStatusColor = Color.Red;
+      this.hasRecentTiltData = false;
       this.bleScanStatus = '已断开';
     });
   }
@@ -402,6 +395,8 @@ struct Index {
   selectBleDevice(item: BleDeviceItem): void {
     this.selectedBleDeviceId = item.deviceId;
     this.selectedBleDeviceName = item.deviceName;
+    this.isbleConnected = false;
+    this.bleconnectionStatusColor = Color.Red;
     this.bleScanStatus = `连接 ${item.deviceName}`;
     this.isBleScanning = false;
     const connecting: boolean = this.wtBLE.connectDevice(item.deviceId, item.deviceName);
@@ -421,7 +416,7 @@ struct Index {
   }
 
   enterAfterBleSelected(): void {
-    if (this.selectedBleDeviceId.length === 0) {
+    if (this.selectedBleDeviceId.length === 0 || !this.isbleConnected) {
       return;
     }
     this.stopBleDeviceScan();
@@ -431,6 +426,21 @@ struct Index {
     } else if (this.appMode === APP_MODE_OFFLINE) {
       this.pushPage('OfflineInterface');
     }
+  }
+
+  skipBleConnection(): void {
+    if (this.appMode !== APP_MODE_OFFLINE) {
+      return;
+    }
+    this.stopBleDeviceScan();
+    this.wtBLE.disconnect();
+    this.selectedBleDeviceId = '';
+    this.selectedBleDeviceName = '';
+    this.isbleConnected = false;
+    this.bleconnectionStatusColor = Color.Gray;
+    this.hasRecentTiltData = false;
+    this.bleScanStatus = '已跳过姿态传感器';
+    this.pushPage('OfflineInterface');
   }
 
   openOfflineHistory(): void {
@@ -600,15 +610,31 @@ struct Index {
         .width('100%')
         .layoutWeight(1)
 
-        Button(this.selectedBleDeviceId.length > 0 ? '进入' : '请选择')
-          .fontSize(13)
-          .type(ButtonType.Capsule)
-          .backgroundColor(this.selectedBleDeviceId.length > 0 ? 0x2f9b67 : 0x555555)
-          .fontColor(Color.White)
-          .width(104)
-          .height(34)
-          .margin({ top: 4, bottom: 2 })
-          .onClick(() => this.enterAfterBleSelected())
+        Row() {
+          Button(this.isbleConnected ? '进入' :
+            (this.selectedBleDeviceId.length > 0 ? '连接中' : '请选择'))
+            .fontSize(13)
+            .type(ButtonType.Capsule)
+            .backgroundColor(this.isbleConnected ? 0x2f9b67 : 0x555555)
+            .fontColor(Color.White)
+            .width(104)
+            .height(34)
+            .onClick(() => this.enterAfterBleSelected())
+
+          if (this.appMode === APP_MODE_OFFLINE) {
+            Button('跳过')
+              .fontSize(13)
+              .type(ButtonType.Capsule)
+              .backgroundColor(0x555555)
+              .fontColor(Color.White)
+              .width(72)
+              .height(34)
+              .margin({ left: 8 })
+              .onClick(() => this.skipBleConnection())
+          }
+        }
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 4, bottom: 2 })
       }
       .width('100%')
       .height('100%')
@@ -635,6 +661,20 @@ struct Index {
           .fontColor(0x333333)
           .margin({ bottom: 5 })
 
+        Row() {
+          Text('姿态')
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+          Circle()
+            .width(8)
+            .height(8)
+            .fill(this.bleconnectionStatusColor)
+            .margin({ left: 5 })
+        }
+        .justifyContent(FlexAlign.Center)
+        .margin({ bottom: 5 })
+
         Button('历史记录')
           .fontSize(10)
           .type(ButtonType.Capsule)
@@ -652,9 +692,19 @@ struct Index {
           .fontColor(Color.White)
           .textAlign(TextAlign.Center)
 
-        Text(formatDuration(this.offlineElapsedSeconds))
-          .fontSize(12)
-          .fontColor(Color.White)
+        Row() {
+          Text(formatDuration(this.offlineElapsedSeconds))
+            .fontSize(9)
+            .fontColor(Color.White)
+          Text(`近1分均倾 ${this.hasRecentTiltData ? this.formatSignedAngle(this.recentTiltAverage) : '---'}`)
+            .fontSize(9)
+            .fontColor(0x9fc7ff)
+          Text(`心率 ${this.heartRate}`)
+            .fontSize(9)
+            .fontColor(0xff8b8b)
+        }
+          .width('90%')
+          .justifyContent(FlexAlign.SpaceBetween)
           .margin({ bottom: 5 })
 
         Stack() {
@@ -744,14 +794,6 @@ struct Index {
           .height('74%')
         }
 
-        Button('返回')
-          .fontSize(13)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x555555)
-          .fontColor(Color.White)
-          .width(80)
-          .height(34)
-          .onClick(() => this.popPage())
       }
       .width('100%')
       .height('100%')
@@ -789,54 +831,76 @@ struct Index {
           Text(this.getSelectedReportHeartText())
             .fontSize(11)
             .fontColor(Color.Gray)
-            .margin({ bottom: 6 })
+            .margin({ bottom: 3 })
 
-          Row() {
-            ForEach(this.buildHeartBars(this.selectedReport), (bar: ChartBar) => {
-              Text('')
-                .width(3)
-                .height(bar.height)
-                .backgroundColor(0xff6b6b)
-                .margin({ right: 1 })
-            })
-          }
-          .height(64)
-          .width('92%')
-          .alignItems(VerticalAlign.Bottom)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(0x181818)
-          .borderRadius(8)
-          .margin({ bottom: 8 })
+          Text('心率曲线')
+            .fontSize(9)
+            .fontColor(0xff8b8b)
+            .margin({ bottom: 2 })
 
           Stack() {
-            ForEach(this.buildGpsPoints(this.selectedReport), (point: PlotPoint) => {
-              Circle()
-                .width(4)
-                .height(4)
-                .fill(0x4bc0ff)
-                .position({ x: point.x, y: point.y })
-            })
+            if (this.hasHeartSeries(this.selectedReport)) {
+              Path({
+                width: 160,
+                height: 54,
+                commands: this.buildHeartLinePath(this.selectedReport)
+              })
+                .fill(Color.Transparent)
+                .stroke(0xffff6b6b)
+                .strokeWidth(2)
+            } else {
+              Text('暂无心率数据')
+                .fontSize(10)
+                .fontColor(Color.Gray)
+            }
           }
-          .width(150)
-          .height(86)
+          .width(160)
+          .height(54)
           .backgroundColor(0x181818)
-          .borderRadius(8)
-          .margin({ bottom: 8 })
+          .borderRadius(6)
+          .margin({ bottom: 5 })
+
+          Text(this.getSelectedReportTiltText())
+            .fontSize(10)
+            .fontColor(Color.Gray)
+            .margin({ bottom: 2 })
+
+          Stack() {
+            if (this.hasTiltSeries(this.selectedReport)) {
+              Path({
+                width: 160,
+                height: 54,
+                commands: 'M 4 27 L 156 27'
+              })
+                .fill(Color.Transparent)
+                .stroke(0xff555555)
+                .strokeWidth(1)
+
+              Path({
+                width: 160,
+                height: 54,
+                commands: this.buildTiltLinePath(this.selectedReport)
+              })
+                .fill(Color.Transparent)
+                .stroke(0xff4bc0ff)
+                .strokeWidth(2)
+            } else {
+              Text('暂无倾角数据')
+                .fontSize(10)
+                .fontColor(Color.Gray)
+            }
+          }
+          .width(160)
+          .height(54)
+          .backgroundColor(0x181818)
+          .borderRadius(6)
+          .margin({ bottom: 5 })
 
           Text(this.getSelectedReportDistanceText())
             .fontSize(11)
             .fontColor(Color.Gray)
             .margin({ bottom: 6 })
         }
-
-        Button('返回')
-          .fontSize(13)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x555555)
-          .fontColor(Color.White)
-          .width(80)
-          .height(32)
-          .onClick(() => this.popPage())
       }
       .width('100%')
       .height('100%')
@@ -1272,6 +1336,9 @@ struct Index {
       this.offlineStore.startSession(this.offlineStartedAt);
       this.offlineSampleCount = 0;
       this.offlineElapsedSeconds = 0;
+      this.recentTiltValues = [];
+      this.recentTiltAverage = 0;
+      this.hasRecentTiltData = false;
       this.isOfflineRecording = true;
       this.offlineButtonString = '停止';
       this.offlineStatus = '记录中';
@@ -1298,14 +1365,21 @@ struct Index {
       return;
     }
     this.offlineElapsedSeconds = Math.max(0, Math.floor((Date.now() - this.offlineStartedAt) / 1000));
-    const report: TrainingReport | null = this.offlineStore.finishSession(Date.now());
-    this.isOfflineRecording = false;
-    this.offlineButtonString = '开始';
-    if (report) {
-      this.offlineStatus = `已生成报告 ${report.sampleCount}点`;
-      this.selectedReport = report;
-    } else {
-      this.offlineStatus = '无报告';
+    try {
+      const report: TrainingReport | null = this.offlineStore.finishSession(Date.now());
+      if (report) {
+        this.offlineStatus = `已生成报告 ${report.sampleCount}点`;
+        this.selectedReport = report;
+      } else {
+        this.offlineStatus = '无报告';
+      }
+    } catch (error) {
+      const stopError: Error = error as Error;
+      this.offlineStatus = '报告生成失败';
+      console.error(`停止离线记录失败: ${stopError.message}`);
+    } finally {
+      this.isOfflineRecording = false;
+      this.offlineButtonString = '开始';
     }
     this.refreshOfflineReports();
   }
@@ -1315,28 +1389,33 @@ struct Index {
       return;
     }
 
-    const imu: OfflineImuSample = {
-      acceleration: {
-        x: this.wtBLE.ble_sensorData.acceleration.x,
-        y: this.wtBLE.ble_sensorData.acceleration.y,
-        z: this.wtBLE.ble_sensorData.acceleration.z
-      },
-      angularVelocity: {
-        x: this.wtBLE.ble_sensorData.angularVelocity.x,
-        y: this.wtBLE.ble_sensorData.angularVelocity.y,
-        z: this.wtBLE.ble_sensorData.angularVelocity.z
-      },
-      angle: {
-        roll: this.wtBLE.ble_sensorData.angle.roll,
-        pitch: this.wtBLE.ble_sensorData.angle.pitch,
-        yaw: this.wtBLE.ble_sensorData.angle.yaw
-      },
-      rawData: [...this.wtBLE.ble_sensorData.rawData]
-    };
+    const now: number = Date.now();
+    const hasSensorData: boolean = this.isOfflineSensorDataAvailable(now);
+    let imu: OfflineImuSample | string = '-';
+    if (hasSensorData) {
+      imu = {
+        acceleration: {
+          x: this.wtBLE.ble_sensorData.acceleration.x,
+          y: this.wtBLE.ble_sensorData.acceleration.y,
+          z: this.wtBLE.ble_sensorData.acceleration.z
+        },
+        angularVelocity: {
+          x: this.wtBLE.ble_sensorData.angularVelocity.x,
+          y: this.wtBLE.ble_sensorData.angularVelocity.y,
+          z: this.wtBLE.ble_sensorData.angularVelocity.z
+        },
+        angle: {
+          roll: this.wtBLE.ble_sensorData.angle.roll,
+          pitch: this.wtBLE.ble_sensorData.angle.pitch,
+          yaw: this.wtBLE.ble_sensorData.angle.yaw
+        },
+        rawData: [...this.wtBLE.ble_sensorData.rawData]
+      };
+    }
 
     const sample: OfflineRawSample = {
-      schemaVersion: 1,
-      timestamp: Date.now(),
+      schemaVersion: 2,
+      timestamp: now,
       heartRate: this.heartRate,
       gps: {
         longitude: this.location[0],
@@ -1351,6 +1430,14 @@ struct Index {
     try {
       this.offlineStore.appendSample(sample);
       this.offlineSampleCount += 1;
+      if (hasSensorData) {
+        this.updateRecentTiltAverage(this.wtBLE.ble_sensorData.angle.roll);
+        this.hasRecentTiltData = true;
+      } else {
+        this.recentTiltValues = [];
+        this.recentTiltAverage = 0;
+        this.hasRecentTiltData = false;
+      }
       this.offlineElapsedSeconds = Math.max(0, Math.floor((Date.now() - this.offlineStartedAt) / 1000));
       this.offlineStatus = `记录中 ${formatDuration(this.offlineSampleCount)}`;
     } catch (error) {
@@ -1380,7 +1467,18 @@ struct Index {
     if (report === null) {
       return '';
     }
-    return `均心 ${report.averageHeartRate}  最高 ${report.maxHeartRate}`;
+    return `均心 ${report.averageHeartRate}  最高 ${report.maxHeartRate}  最低 ${report.minHeartRate}`;
+  }
+
+  getSelectedReportTiltText(): string {
+    const report: TrainingReport | null = this.selectedReport;
+    if (report === null) {
+      return '';
+    }
+    if (report.tiltSeries.length === 0) {
+      return '倾角曲线  均值 ---  峰值 ---';
+    }
+    return `倾角曲线  均值 ${this.formatSignedAngle(report.averageTilt)}  峰值 ${this.formatSignedAngle(report.maxTilt)}`;
   }
 
   getSelectedReportDistanceText(): string {
@@ -1391,59 +1489,107 @@ struct Index {
     return `距离 ${report.distanceMeter} m`;
   }
 
-  buildHeartBars(report: TrainingReport | null): ChartBar[] {
-    const bars: ChartBar[] = [];
-    if (report === null || report.heartSeries.length === 0) {
-      return bars;
-    }
-
-    let maxValue: number = 1;
-    for (let i: number = 0; i < report.heartSeries.length; i++) {
-      maxValue = Math.max(maxValue, report.heartSeries[i].value);
-    }
-
-    const step: number = Math.max(1, Math.ceil(report.heartSeries.length / 36));
-    for (let i: number = 0; i < report.heartSeries.length; i += step) {
-      const value: number = report.heartSeries[i].value;
-      const bar: ChartBar = {
-        id: `${i}`,
-        value: value,
-        height: Math.max(4, Math.floor(value / maxValue * 58))
-      };
-      bars.push(bar);
-    }
-    return bars;
+  hasHeartSeries(report: TrainingReport | null): boolean {
+    return report !== null && report.heartSeries.length > 0;
   }
 
-  buildGpsPoints(report: TrainingReport | null): PlotPoint[] {
-    const points: PlotPoint[] = [];
-    if (report === null || report.gpsTrack.length === 0) {
-      return points;
+  hasTiltSeries(report: TrainingReport | null): boolean {
+    return report !== null && report.tiltSeries.length > 0;
+  }
+
+  buildHeartLinePath(report: TrainingReport | null): string {
+    if (report === null) {
+      return '';
+    }
+    return this.buildSeriesLinePath(report.heartSeries, 160, 54);
+  }
+
+  buildTiltLinePath(report: TrainingReport | null): string {
+    if (report === null) {
+      return '';
+    }
+    return this.buildSignedSeriesLinePath(report.tiltSeries, 160, 54);
+  }
+
+  buildSignedSeriesLinePath(series: ChartPoint[], width: number, height: number): string {
+    if (series.length === 0) {
+      return '';
     }
 
-    let minLon: number = report.gpsTrack[0].longitude;
-    let maxLon: number = report.gpsTrack[0].longitude;
-    let minLat: number = report.gpsTrack[0].latitude;
-    let maxLat: number = report.gpsTrack[0].latitude;
-    for (let i: number = 0; i < report.gpsTrack.length; i++) {
-      minLon = Math.min(minLon, report.gpsTrack[i].longitude);
-      maxLon = Math.max(maxLon, report.gpsTrack[i].longitude);
-      minLat = Math.min(minLat, report.gpsTrack[i].latitude);
-      maxLat = Math.max(maxLat, report.gpsTrack[i].latitude);
+    let maxAbsoluteValue: number = 0;
+    for (let i: number = 0; i < series.length; i++) {
+      maxAbsoluteValue = Math.max(maxAbsoluteValue, Math.abs(series[i].value));
     }
 
-    const lonRange: number = Math.max(maxLon - minLon, 0.000001);
-    const latRange: number = Math.max(maxLat - minLat, 0.000001);
-    const step: number = Math.max(1, Math.ceil(report.gpsTrack.length / 48));
-    for (let i: number = 0; i < report.gpsTrack.length; i += step) {
-      const point: PlotPoint = {
-        id: `${i}`,
-        x: Math.floor((report.gpsTrack[i].longitude - minLon) / lonRange * 144),
-        y: Math.floor((maxLat - report.gpsTrack[i].latitude) / latRange * 80)
-      };
-      points.push(point);
+    const margin: number = 4;
+    const step: number = Math.max(1, Math.ceil(series.length / 48));
+    const pointCount: number = Math.ceil(series.length / step);
+    const safeMaxAbsoluteValue: number = Math.max(maxAbsoluteValue, 0.001);
+    let pointIndex: number = 0;
+    let commands: string = '';
+    for (let i: number = 0; i < series.length; i += step) {
+      const x: number = pointCount === 1 ? width / 2 :
+        margin + pointIndex / (pointCount - 1) * (width - margin * 2);
+      const y: number = margin +
+        (safeMaxAbsoluteValue - series[i].value) / (safeMaxAbsoluteValue * 2) * (height - margin * 2);
+      commands += pointIndex === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` :
+        ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+      pointIndex += 1;
     }
-    return points;
+    return commands;
+  }
+
+  buildSeriesLinePath(series: ChartPoint[], width: number, height: number): string {
+    if (series.length === 0) {
+      return '';
+    }
+
+    let minValue: number = series[0].value;
+    let maxValue: number = series[0].value;
+    for (let i: number = 1; i < series.length; i++) {
+      minValue = Math.min(minValue, series[i].value);
+      maxValue = Math.max(maxValue, series[i].value);
+    }
+
+    const margin: number = 4;
+    const step: number = Math.max(1, Math.ceil(series.length / 48));
+    const pointCount: number = Math.ceil(series.length / step);
+    const valueRange: number = Math.max(maxValue - minValue, 0.001);
+    let pointIndex: number = 0;
+    let commands: string = '';
+    for (let i: number = 0; i < series.length; i += step) {
+      const x: number = pointCount === 1 ? width / 2 :
+        margin + pointIndex / (pointCount - 1) * (width - margin * 2);
+      const y: number = maxValue === minValue ? height / 2 :
+        margin + (maxValue - series[i].value) / valueRange * (height - margin * 2);
+      commands += pointIndex === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` :
+        ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+      pointIndex += 1;
+    }
+    return commands;
+  }
+
+  updateRecentTiltAverage(roll: number): void {
+    this.recentTiltValues.push(roll);
+    while (this.recentTiltValues.length > 60) {
+      this.recentTiltValues.shift();
+    }
+    let total: number = 0;
+    for (let i: number = 0; i < this.recentTiltValues.length; i++) {
+      total += this.recentTiltValues[i];
+    }
+    this.recentTiltAverage = this.recentTiltValues.length > 0 ?
+      total / this.recentTiltValues.length : 0;
+  }
+
+  isOfflineSensorDataAvailable(now: number): boolean {
+    const sensorTimestamp: number = this.wtBLE.ble_sensorData.timestamp;
+    return this.isbleConnected && sensorTimestamp > 0 && now - sensorTimestamp <= 5000;
+  }
+
+  formatSignedAngle(value: number): string {
+    const prefix: string = value > 0 ? '+' : '';
+    return `${prefix}${value.toFixed(1)}°`;
   }
 
   wtBLE: BleManagement = new BleManagement(); // 用于连接并读取wt姿态传感器
