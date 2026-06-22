@@ -11,6 +11,15 @@ export interface BleDeviceItem {
   lastSeen: number;
 }
 
+export interface BleSecondDiagnostics {
+  notificationCount: number;
+  receivedBytes: number;
+  parsedFrameCount: number;
+  invalidByteCount: number;
+  bufferedBytes: number;
+  lastFrameTimestamp: number;
+}
+
 interface acceleration {
   x : number;
   y : number;
@@ -84,6 +93,12 @@ export class BleManagement {
   private autoMacProbeTimeoutTimer: number | undefined = undefined;
   private macQueryDeviceId: string = "";
   private macQueryDeviceName: string = "";
+  private notificationBuffer: number[] = [];
+  private diagnosticNotificationCount: number = 0;
+  private diagnosticReceivedBytes: number = 0;
+  private diagnosticParsedFrameCount: number = 0;
+  private diagnosticInvalidByteCount: number = 0;
+  private lastFrameTimestamp: number = 0;
 
   public ble_sensorData: wt_SensorData = {
     header : 0,
@@ -337,6 +352,8 @@ export class BleManagement {
     console.log('try connect');
     try {
       this.isGattConnected = false;
+      this.notificationBuffer = [];
+      this.last1sData = [];
       if (this.connectedDevice) {
         try {
           this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);
@@ -411,6 +428,22 @@ export class BleManagement {
     if (this.deviceDiscoveryUpdate) {
       this.deviceDiscoveryUpdate(this.copyDiscoveredDevices());
     }
+  }
+
+  public getAndResetSecondDiagnostics(): BleSecondDiagnostics {
+    const diagnostics: BleSecondDiagnostics = {
+      notificationCount: this.diagnosticNotificationCount,
+      receivedBytes: this.diagnosticReceivedBytes,
+      parsedFrameCount: this.diagnosticParsedFrameCount,
+      invalidByteCount: this.diagnosticInvalidByteCount,
+      bufferedBytes: this.notificationBuffer.length,
+      lastFrameTimestamp: this.lastFrameTimestamp
+    };
+    this.diagnosticNotificationCount = 0;
+    this.diagnosticReceivedBytes = 0;
+    this.diagnosticParsedFrameCount = 0;
+    this.diagnosticInvalidByteCount = 0;
+    return diagnostics;
   }
 
   private queueDeviceForMacProbe(device: BleDeviceItem): void {
@@ -610,12 +643,7 @@ export class BleManagement {
               const responseAscii: string = this.arrayBufferToPrintableAscii(changedChar.characteristicValue);
               console.info(`[BLE_MAC_QUERY] notify hex=${responseHex}, ascii=${responseAscii}`);
             }
-            const macAddress: string = this.parseMacQueryResponse(changedChar.characteristicValue);
-            if (macAddress.length > 0) {
-              this.updateSelectedDeviceMac(macAddress);
-              return;
-            }
-            this.handleReceivedData(changedChar.characteristicValue);
+            this.handleNotificationPayload(changedChar.characteristicValue);
           }
         };
         this.connectedDevice!.off('BLECharacteristicChange');
@@ -690,6 +718,65 @@ export class BleManagement {
     return "";
   }
 
+  private handleNotificationPayload(data: ArrayBuffer): void {
+    const bytes: Uint8Array = new Uint8Array(data);
+    this.diagnosticNotificationCount += 1;
+    this.diagnosticReceivedBytes += bytes.length;
+    for (let i: number = 0; i < bytes.length; i++) {
+      this.notificationBuffer.push(bytes[i]);
+    }
+    while (this.notificationBuffer.length > 4096) {
+      this.notificationBuffer.shift();
+      this.diagnosticInvalidByteCount += 1;
+    }
+
+    let resolvedMac: string = '';
+    while (this.notificationBuffer.length >= 2) {
+      if (this.notificationBuffer[0] !== 0x55) {
+        this.notificationBuffer.shift();
+        this.diagnosticInvalidByteCount += 1;
+        continue;
+      }
+
+      const frameType: number = this.notificationBuffer[1];
+      if (frameType !== 0x61 && frameType !== 0x71) {
+        this.notificationBuffer.shift();
+        this.diagnosticInvalidByteCount += 1;
+        continue;
+      }
+      if (this.notificationBuffer.length < 20) {
+        break;
+      }
+
+      const frame: number[] = this.notificationBuffer.splice(0, 20);
+      if (frameType === 0x61) {
+        this.handleReceivedData(this.numberArrayToBuffer(frame));
+        this.diagnosticParsedFrameCount += 1;
+        this.lastFrameTimestamp = Date.now();
+      } else if (frame[2] === 0x66 && frame[3] === 0x00) {
+        const macAddress: string = this.parseMacQueryResponse(this.numberArrayToBuffer(frame));
+        if (macAddress.length > 0) {
+          resolvedMac = macAddress;
+        }
+      } else {
+        this.diagnosticInvalidByteCount += frame.length;
+      }
+    }
+
+    if (resolvedMac.length > 0) {
+      this.updateSelectedDeviceMac(resolvedMac);
+    }
+  }
+
+  private numberArrayToBuffer(values: number[]): ArrayBuffer {
+    const buffer: ArrayBuffer = new ArrayBuffer(values.length);
+    const target: Uint8Array = new Uint8Array(buffer);
+    for (let i: number = 0; i < values.length; i++) {
+      target[i] = values[i];
+    }
+    return buffer;
+  }
+
   private updateSelectedDeviceMac(macAddress: string): void {
     const devices: BleDeviceItem[] = [];
     let updated: boolean = false;
@@ -743,6 +830,9 @@ export class BleManagement {
       this.ble_sensorData = this.parseWT901Data(values);
       // 把数据包放入数组中
       this.last1sData.push(this.ble_sensorData);
+      while (this.last1sData.length > 200) {
+        this.last1sData.shift();
+      }
 
       // console.log(`角度: roll: ${this.ble_sensorData.angle.roll},pitch: ${this.ble_sensorData.angle.pitch},yaw: ${this.ble_sensorData.angle.yaw}`);
 
@@ -882,17 +972,21 @@ export class BleManagement {
     const yawValues: number[] = [];
     const pitchValues: number[] = [];
 
-    // 遍历数组，收集所有数据点
-    sensorDataArray.forEach((data, index) => {
-      // 只取前10个数据点（如果数组长度超过10）
-      if (index < 10) {
-        rollValues.push(data.angle.roll);
-        yawValues.push(data.angle.yaw);
-        pitchValues.push(data.angle.pitch);
-      }
-    });
+    // 超过10帧时在整秒范围内均匀抽样，避免只上传这一秒最早的旧数据。
+    const targetCount: number = Math.min(sensorDataArray.length, 10);
+    for (let i: number = 0; i < targetCount; i++) {
+      const sourceIndex: number = targetCount === 1 ? 0 :
+        Math.round(i * (sensorDataArray.length - 1) / (targetCount - 1));
+      const data: wt_SensorData = sensorDataArray[sourceIndex];
+      rollValues.push(data.angle.roll);
+      yawValues.push(data.angle.yaw);
+      pitchValues.push(data.angle.pitch);
+    }
 
-    // 如果数据点不足10个，用最后一个值填充（或者可以根据需求用其他方式处理）
+    // 协议固定要求10个值；不足时兼容补齐，但明确记录日志，不能再把它误认为真实10帧。
+    if (sensorDataArray.length < 10) {
+      console.warn(`[BLE_FRAME_DIAG] posture frames=${sensorDataArray.length}, paddedTo=10`);
+    }
     while (rollValues.length < 10) {
       rollValues.push(rollValues.length > 0 ? rollValues[rollValues.length - 1] : 0);
     }
@@ -931,6 +1025,7 @@ export class BleManagement {
     this.isGattConnected = false;
     this.cancelAutoMacProbe();
     this.stopScan();
+    this.notificationBuffer = [];
     if (this.connectedDevice) {
       try {
         this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);

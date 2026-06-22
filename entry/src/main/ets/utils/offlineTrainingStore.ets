@@ -26,9 +26,13 @@ export interface OfflineImuSample {
 export interface OfflineGpsSample {
   longitude: number;
   latitude: number;
+  rawLongitude?: number;
+  rawLatitude?: number;
   speed: number;
   headingT: number | null;
   accuracy: number;
+  accepted?: boolean;
+  filterReason?: string;
 }
 
 export interface OfflineRawSample {

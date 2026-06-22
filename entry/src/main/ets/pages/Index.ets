@@ -8,7 +8,7 @@ import { JSON } from '@kit.ArkTS';
 import { display } from '@kit.ArkUI';
 import { notificationManager } from '@kit.NotificationKit'
 
-import {BleManagement, wt_SensorData, BleDeviceItem} from '../utils/bluetoothManage'
+import {BleManagement, wt_SensorData, BleDeviceItem, BleSecondDiagnostics} from '../utils/bluetoothManage'
 import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data, WindDataMessage} from '../utils/mqtt'
 import {DataUploader, UploadData, ble_SensorData} from '../utils/updataloader'
 import {
@@ -28,6 +28,7 @@ import {
   OfflineModeConfig,
   OfflineModeConfigStore
 } from '../utils/offlineModeConfigStore'
+import { GpsKalmanFilter, GpsFilterResult } from '../utils/gpsKalmanFilter'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -202,10 +203,16 @@ struct Index {
 
   @State heartRate: number = 0;
   @State location: Array<number> = [0,0]; //[0]经度 [1]纬度
+  @State filteredLocation: Array<number> = [0,0];
   @State headingT: number | null = null;
   @State gps_accuracy: number = 0;
+  private gpsFilter: GpsKalmanFilter = new GpsKalmanFilter();
+  private latestGpsAccepted: boolean = false;
+  private latestGpsFilterReason: string = 'uninitialized';
+  private latestGpsReceivedAt: number = 0;
   sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
   @State speed: number = 0;
+  @State filteredSpeed: number = 0;
   //上传数据的定时器变量
   @State uploadTimer: number | undefined = undefined;
   @State uploadTimer_buffer: number | undefined = undefined;
@@ -288,6 +295,7 @@ struct Index {
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
   private recentTiltValues: number[] = [];
+  private lastTiltAverageSampleAt: number = 0;
   private offlineLongPressDuration: number = 2000;
   private offlineStopCompletedByLongPress: boolean = false;
   private blePreferenceMode: BlePreferenceMode = 'unconfigured';
@@ -718,6 +726,7 @@ struct Index {
     this.recentTiltValues = [];
     this.recentTiltAverage = 0;
     this.hasRecentTiltData = false;
+    this.lastTiltAverageSampleAt = 0;
     if (this.appMode === APP_MODE_SERVER) {
       this.saveOnlineTrainingConfig();
     } else {
@@ -740,7 +749,7 @@ struct Index {
     this.refreshOfflineTiltDisplay();
     this.offlineTiltDisplayTimer = setInterval(() => {
       this.refreshOfflineTiltDisplay();
-    }, 1000);
+    }, 200);
   }
 
   stopOfflineTiltDisplay(): void {
@@ -754,13 +763,22 @@ struct Index {
     if (this.isOfflineRecording) {
       return;
     }
-    if (this.isOfflineSensorDataAvailable(Date.now())) {
-      this.updateRecentTiltAverage(this.wtBLE.ble_sensorData.angle.roll);
+    const now: number = Date.now();
+    if (this.isOfflineSensorDataAvailable(now)) {
+      const roll: number = this.wtBLE.ble_sensorData.angle.roll;
+      if (this.offlineTiltAverageSeconds === 1) {
+        this.recentTiltValues = [roll];
+        this.recentTiltAverage = roll;
+      } else if (now - this.lastTiltAverageSampleAt >= 1000) {
+        this.updateRecentTiltAverage(roll);
+        this.lastTiltAverageSampleAt = now;
+      }
       this.hasRecentTiltData = true;
     } else {
       this.recentTiltValues = [];
       this.recentTiltAverage = 0;
       this.hasRecentTiltData = false;
+      this.lastTiltAverageSampleAt = 0;
     }
   }
 
@@ -1012,7 +1030,7 @@ struct Index {
           .opacity(this.isOfflineRecording ? 0.45 : 1)
           .onClick(() => this.openOfflineSettings())
 
-        Text(`${(this.speed * 1.94).toFixed(1)}`)
+        Text(`${(this.filteredSpeed * 1.943844).toFixed(1)}`)
           .fontSize(80)
           .fontWeight(FontWeight.Medium)
           .fontColor(Color.White)
@@ -1630,7 +1648,7 @@ struct Index {
           .onClick(() => this.openOnlineMenu())
 
         // 速度显示
-        Text(`${(this.speed * 1.94).toFixed(1)}`)
+        Text(`${(this.filteredSpeed * 1.943844).toFixed(1)}`)
           .fontSize(80)
           .fontWeight(FontWeight.Medium)
           .fontColor(Color.White)
@@ -1948,11 +1966,16 @@ struct Index {
       timestamp: now,
       heartRate: this.heartRate,
       gps: {
-        longitude: this.location[0],
-        latitude: this.location[1],
+        longitude: this.filteredLocation[0] !== 0 ? this.filteredLocation[0] : this.location[0],
+        latitude: this.filteredLocation[1] !== 0 ? this.filteredLocation[1] : this.location[1],
+        rawLongitude: this.location[0],
+        rawLatitude: this.location[1],
         speed: this.speed,
         headingT: this.headingT,
-        accuracy: this.gps_accuracy
+        accuracy: this.gps_accuracy,
+        accepted: this.latestGpsAccepted && now - this.latestGpsReceivedAt <= 3000,
+        filterReason: now - this.latestGpsReceivedAt <= 3000 ?
+          this.latestGpsFilterReason : 'stale_location'
       },
       imu: imu
     };
@@ -2501,8 +2524,12 @@ struct Index {
       this.myMqttUploadData.data.mHmName = this.selectedmhmName;
       this.myMqttUploadData.data.color = this.selectedGroupColor;
 
-      this.myMqttUploadData.data.longitude = String(this.location[0].toFixed(6));
-      this.myMqttUploadData.data.latitude = String(this.location[1].toFixed(6));
+      const generalLongitude: number = this.filteredLocation[0] !== 0 ?
+        this.filteredLocation[0] : this.location[0];
+      const generalLatitude: number = this.filteredLocation[1] !== 0 ?
+        this.filteredLocation[1] : this.location[1];
+      this.myMqttUploadData.data.longitude = String(generalLongitude.toFixed(6));
+      this.myMqttUploadData.data.latitude = String(generalLatitude.toFixed(6));
 
       this.myMqttUploadData.data.yaw = Math.trunc(this.wtBLE.transYaw());
       this.myMqttUploadData.data.rol = Math.trunc(( - this.wtBLE.ble_sensorData.angle.roll));
@@ -2711,17 +2738,18 @@ struct Index {
       await this.mqttManager.publish(`mobile/up/general-train/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(this.myMqttUploadData),1);
 
       let gps_valid: string = "V";
-      if(this.gps_accuracy < gps_accuracy_set){
+      if(this.latestGpsAccepted && Date.now() - this.latestGpsReceivedAt <= 3000 &&
+        this.gps_accuracy < gps_accuracy_set){
         gps_valid = "A";
       }
       let gps_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "gps",
-        data: `${gps_valid},${this.myMqttUploadData.data.longitude},${this.myMqttUploadData.data.latitude},${(this.speed * 100).toFixed(4)},${this.myMqttUploadData.data.headingT},${declination}`
+        data: `${gps_valid},${this.location[0].toFixed(6)},${this.location[1].toFixed(6)},${(this.speed * 100).toFixed(4)},${this.myMqttUploadData.data.headingT},${declination}`
       }
       if(this.myMqttUploadData.data.speed === 0){
-        gps_original_data.data = `${gps_valid},${this.myMqttUploadData.data.longitude},${this.myMqttUploadData.data.latitude},${(this.speed * 100).toFixed(1)},${this.myMqttUploadData.data.headingT},${declination}`
+        gps_original_data.data = `${gps_valid},${this.location[0].toFixed(6)},${this.location[1].toFixed(6)},${(this.speed * 100).toFixed(1)},${this.myMqttUploadData.data.headingT},${declination}`
       }
 
       // 发布航行原始数据
@@ -2729,11 +2757,18 @@ struct Index {
 
       let last1sSensorData: wt_SensorData[] = this.wtBLE.getLast1sData();
       let last1sSensorString: string = this.wtBLE.formatAngleDataForPosture(last1sSensorData)
+      const bleDiagnostics: BleSecondDiagnostics = this.wtBLE.getAndResetSecondDiagnostics();
+      console.info(`[BLE_FRAME_DIAG] notifications=${bleDiagnostics.notificationCount}, ` +
+        `bytes=${bleDiagnostics.receivedBytes}, frames=${bleDiagnostics.parsedFrameCount}, ` +
+        `invalid=${bleDiagnostics.invalidByteCount}, buffered=${bleDiagnostics.bufferedBytes}, ` +
+        `lastFrameAgeMs=${bleDiagnostics.lastFrameTimestamp > 0 ?
+          Date.now() - bleDiagnostics.lastFrameTimestamp : -1}, ` +
+        `mqttQueue=${this.mqttManager.getPendingMessageCount()}`);
       let posture_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "posture",
-        data: `${this.wtBLE.formatAngleDataForPosture(last1sSensorData)}`
+        data: last1sSensorString
       }
       //姿态数据不为空才上传
       if(last1sSensorString != ""){
@@ -2784,6 +2819,9 @@ struct Index {
     this.checkTimer = setInterval(async () => {
 
       let success = false;
+      if (this.latestGpsReceivedAt === 0 || Date.now() - this.latestGpsReceivedAt > 3000) {
+        this.filteredSpeed = 0;
+      }
       if (this.appMode === APP_MODE_SERVER) {
         success = this.mqttManager.isConnected;
 
@@ -2960,6 +2998,24 @@ struct Index {
           this.speed = location.speed;
         }
         this.gps_accuracy = location.accuracy;
+        this.latestGpsReceivedAt = Date.now();
+        const filterResult: GpsFilterResult = this.gpsFilter.update({
+          longitude: location.longitude,
+          latitude: location.latitude,
+          accuracy: location.accuracy,
+          speed: location.speed,
+          timestamp: location.timeStamp > 0 ? location.timeStamp : Date.now()
+        });
+        this.latestGpsAccepted = filterResult.accepted;
+        this.latestGpsFilterReason = filterResult.reason;
+        if (filterResult.longitude !== 0 && filterResult.latitude !== 0) {
+          this.filteredLocation = [filterResult.longitude, filterResult.latitude];
+        }
+        this.filteredSpeed = filterResult.speed;
+        if (!filterResult.accepted) {
+          console.warn(`[GPS_FILTER] reason=${filterResult.reason}, accuracy=${location.accuracy}, ` +
+            `innovation=${filterResult.innovationMeter.toFixed(1)}m`);
+        }
 
         if(location.directionAccuracy){
           if(location.directionAccuracy > 0){

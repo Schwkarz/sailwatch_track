@@ -119,9 +119,10 @@ export class MqttManagement {
   private manualReconnect = true;   // 与 automaticReconnect 二选一
 
   private clientId: string = '';    //客户端ID
-  private readonly MAX_PENDING_MESSAGES: number = 500;
+  private readonly MAX_PENDING_MESSAGES: number = 3600;
   private readonly RECONNECT_DELAY_MS: number = 3000;
   private pendingMessages: PendingMqttMessage[] = [];
+  private publishDrainActive: boolean = false;
   private subscriptions: MqttSubscription[] = [];
 
   private windData: WindDataMessage = {
@@ -246,7 +247,9 @@ export class MqttManagement {
       this.isConnected = true;
       this.clearReconnectTimer();
       await this.restoreSubscriptions();
-      await this.flushPendingMessages();
+      this.flushPendingMessages().catch((error: Error) => {
+        console.error(`启动MQTT发送队列失败: ${formatErrorMessage(error)}`);
+      });
       return true;
     } catch (error) {
       console.error(`MQTT连接失败: ${JSON.stringify(error)}`);
@@ -462,11 +465,11 @@ export class MqttManagement {
       payload,
       qos
     };
-    const published = await this.publishDirect(message);
-    if (!published) {
-      this.enqueuePendingMessage(message);
-    }
-    return published;
+    this.enqueuePendingMessage(message);
+    this.flushPendingMessages().catch((error: Error) => {
+      console.error(`MQTT发送队列异常: ${formatErrorMessage(error)}`);
+    });
+    return true;
   }
 
   private enqueuePendingMessage(message: PendingMqttMessage): void {
@@ -475,7 +478,9 @@ export class MqttManagement {
       console.warn('MQTT离线队列已满，丢弃最旧消息');
     }
     this.pendingMessages.push(message);
-    console.warn(`MQTT消息已进入离线队列，当前数量: ${this.pendingMessages.length}`);
+    if (!this.isConnected) {
+      console.warn(`MQTT消息已进入离线队列，当前数量: ${this.pendingMessages.length}`);
+    }
   }
 
   private async publishDirect(message: PendingMqttMessage): Promise<boolean> {
@@ -500,13 +505,26 @@ export class MqttManagement {
   }
 
   private async flushPendingMessages(): Promise<void> {
-    while (this.pendingMessages.length > 0 && this.mqttClient && this.isConnected) {
-      const message = this.pendingMessages[0];
-      const published = await this.publishDirect(message);
-      if (!published) {
-        break;
+    if (this.publishDrainActive) {
+      return;
+    }
+    this.publishDrainActive = true;
+    try {
+      while (this.pendingMessages.length > 0 && this.mqttClient && this.isConnected) {
+        const message: PendingMqttMessage = this.pendingMessages[0];
+        const published: boolean = await this.publishDirect(message);
+        if (!published) {
+          break;
+        }
+        this.pendingMessages.shift();
       }
-      this.pendingMessages.shift();
+    } finally {
+      this.publishDrainActive = false;
+    }
+    if (this.pendingMessages.length > 0 && this.mqttClient && this.isConnected) {
+      this.flushPendingMessages().catch((error: Error) => {
+        console.error(`继续MQTT发送队列失败: ${formatErrorMessage(error)}`);
+      });
     }
   }
 
