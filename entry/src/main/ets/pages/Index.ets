@@ -29,6 +29,7 @@ import {
   OfflineModeConfigStore
 } from '../utils/offlineModeConfigStore'
 import { GpsKalmanFilter, GpsFilterResult } from '../utils/gpsKalmanFilter'
+import { DiagnosticLogStore } from '../utils/diagnosticLogStore'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -291,6 +292,7 @@ struct Index {
   offlineStore: OfflineTrainingStore = new OfflineTrainingStore();
   onlineConfigStore: OnlineTrainingConfigStore = new OnlineTrainingConfigStore();
   offlineModeConfigStore: OfflineModeConfigStore = new OfflineModeConfigStore();
+  diagnosticLogStore: DiagnosticLogStore = new DiagnosticLogStore();
   private hasSetupBleCallbacks: boolean = false;
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
@@ -1043,13 +1045,15 @@ struct Index {
           Text(`${this.getOfflineTiltWindowText()}均倾 ${this.hasRecentTiltData ? this.formatSignedAngle(this.recentTiltAverage) : '---'}`)
             .fontSize(9)
             .fontColor(0x9fc7ff)
+            .margin({ left: 3 })
           Text(`心率 ${this.heartRate}`)
             .fontSize(9)
             .fontColor(0xff8b8b)
+            .margin({ left: 3 })
         }
           .width('90%')
-          .justifyContent(FlexAlign.SpaceBetween)
-          .margin({ bottom: 5 })
+          .justifyContent(FlexAlign.Center)
+          .margin({ bottom: 4 })
 
         Stack() {
           Button(this.isOfflineRecording ? '长按停止' : '开始记录')
@@ -1662,13 +1666,16 @@ struct Index {
           Text(`${this.getOfflineTiltWindowText()}均倾 ${this.hasRecentTiltData ? this.formatSignedAngle(this.recentTiltAverage) : '---'}`)
             .fontSize(9)
             .fontColor(0x9fc7ff)
+            .margin({ left: 3 })
           Text(`心率 ${this.heartRate}`)
             .fontSize(9)
+            .margin({ left: 3 })
             .fontColor(0xff8b8b)
         }
         .width('90%')
-        .justifyContent(FlexAlign.SpaceBetween)
+        .justifyContent(FlexAlign.Center)
         .margin({ bottom: 4 })
+
 
         // 上传按钮区域
         Column() {
@@ -2339,6 +2346,17 @@ struct Index {
       this.offlineStore.setup(this.getAbilityContext().filesDir);
       this.onlineConfigStore.setup(this.getAbilityContext().filesDir);
       this.offlineModeConfigStore.setup(this.getAbilityContext().filesDir);
+      this.diagnosticLogStore.setup(this.getAbilityContext().filesDir);
+      this.mqttManager.setDiagnosticLogger((level: string, tag: string, message: string): void => {
+        if (level === 'ERROR') {
+          this.diagnosticLogStore.error(tag, message);
+        } else if (level === 'WARN') {
+          this.diagnosticLogStore.warn(tag, message);
+        } else {
+          this.diagnosticLogStore.info(tag, message);
+        }
+      });
+      this.diagnosticLogStore.info('APP', `files ready log=${this.diagnosticLogStore.getLogPath()}`);
       this.refreshOfflineReports();
     } catch (error) {
       console.error(`初始化离线存储失败: ${JSON.stringify(error)}`);
@@ -2764,6 +2782,14 @@ struct Index {
         `lastFrameAgeMs=${bleDiagnostics.lastFrameTimestamp > 0 ?
           Date.now() - bleDiagnostics.lastFrameTimestamp : -1}, ` +
         `mqttQueue=${this.mqttManager.getPendingMessageCount()}`);
+      this.diagnosticLogStore.info('SAMPLE',
+        `mqttConnected=${this.mqttManager.isConnected},mqttQueue=${this.mqttManager.getPendingMessageCount()},` +
+        `gpsAccepted=${this.latestGpsAccepted},gpsReason=${this.latestGpsFilterReason},` +
+        `gpsAccuracy=${this.gps_accuracy.toFixed(1)},gpsAgeMs=${this.latestGpsReceivedAt > 0 ? Date.now() - this.latestGpsReceivedAt : -1},` +
+        `bleConnected=${this.isbleConnected},bleNotifications=${bleDiagnostics.notificationCount},` +
+        `bleBytes=${bleDiagnostics.receivedBytes},bleFrames=${bleDiagnostics.parsedFrameCount},` +
+        `bleInvalid=${bleDiagnostics.invalidByteCount},bleBuffered=${bleDiagnostics.bufferedBytes},` +
+        `bleFrameAgeMs=${bleDiagnostics.lastFrameTimestamp > 0 ? Date.now() - bleDiagnostics.lastFrameTimestamp : -1}`);
       let posture_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,

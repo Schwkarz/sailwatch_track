@@ -124,6 +124,8 @@ export class MqttManagement {
   private pendingMessages: PendingMqttMessage[] = [];
   private publishDrainActive: boolean = false;
   private subscriptions: MqttSubscription[] = [];
+  private diagnosticLogger: ((level: string, tag: string, message: string) => void) | null = null;
+  private lastOfflineQueueLogAt: number = 0;
 
   private windData: WindDataMessage = {
     windSourceBoatCode: 'null',
@@ -164,6 +166,16 @@ export class MqttManagement {
     this.host = host;
     this.port = port;
     this.useSSL = useSSL;
+  }
+
+  setDiagnosticLogger(logger: (level: string, tag: string, message: string) => void): void {
+    this.diagnosticLogger = logger;
+  }
+
+  private diagnostic(level: string, message: string): void {
+    if (this.diagnosticLogger) {
+      this.diagnosticLogger(level, 'MQTT', message);
+    }
   }
 
   //设置id
@@ -244,6 +256,7 @@ export class MqttManagement {
 
       const response = await this.mqttClient.connect(finalOptions);
       console.info(`MQTT连接成功: ${JSON.stringify(response)}`);
+      this.diagnostic('INFO', `connected host=${this.host}:${this.port} pending=${this.pendingMessages.length}`);
       this.isConnected = true;
       this.clearReconnectTimer();
       await this.restoreSubscriptions();
@@ -253,6 +266,7 @@ export class MqttManagement {
       return true;
     } catch (error) {
       console.error(`MQTT连接失败: ${JSON.stringify(error)}`);
+      this.diagnostic('ERROR', `connect failed host=${this.host}:${this.port} error=${JSON.stringify(error)}`);
       this.isConnected = false;
       return false;
     } finally {
@@ -296,6 +310,7 @@ export class MqttManagement {
   private scheduleReconnect(): void {
     if (this.reconnectTimer !== null || this.disposed || this.isConnected) return;
 
+    this.diagnostic('WARN', `reconnect scheduled delayMs=${this.RECONNECT_DELAY_MS} pending=${this.pendingMessages.length}`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.disposed || this.isConnected) return;
@@ -335,6 +350,7 @@ export class MqttManagement {
     // 1. 连接丢失回调 - 参数是 Error 类型
     this.mqttClient.connectLost((err: Error) => {
       console.info('MQTT连接已断开');
+      this.diagnostic('ERROR', `connection lost reason=${err ? err.message : 'unknown'} pending=${this.pendingMessages.length}`);
       if (err) {
         console.error(`连接断开原因: ${err.message}`);
       }
@@ -476,10 +492,16 @@ export class MqttManagement {
     if (this.pendingMessages.length >= this.MAX_PENDING_MESSAGES) {
       this.pendingMessages.shift();
       console.warn('MQTT离线队列已满，丢弃最旧消息');
+      this.diagnostic('ERROR', `queue full, oldest message dropped capacity=${this.MAX_PENDING_MESSAGES}`);
     }
     this.pendingMessages.push(message);
     if (!this.isConnected) {
       console.warn(`MQTT消息已进入离线队列，当前数量: ${this.pendingMessages.length}`);
+      const now: number = Date.now();
+      if (now - this.lastOfflineQueueLogAt >= 10000 || this.pendingMessages.length === 1) {
+        this.lastOfflineQueueLogAt = now;
+        this.diagnostic('WARN', `offline queue pending=${this.pendingMessages.length}`);
+      }
     }
   }
 
@@ -495,6 +517,7 @@ export class MqttManagement {
         return true;
       } catch (err) {
         console.error(`发布失败: ${JSON.stringify(err)}`);
+        this.diagnostic('ERROR', `publish failed topic=${message.topic} pending=${this.pendingMessages.length} error=${JSON.stringify(err)}`);
         this.isConnected = false;
         if (this.manualReconnect && !this.disposed) {
           this.scheduleReconnect();
