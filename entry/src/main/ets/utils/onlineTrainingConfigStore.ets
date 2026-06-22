@@ -1,6 +1,6 @@
 import { fileIo } from '@kit.CoreFileKit';
 
-const CONFIG_SCHEMA_VERSION: number = 2;
+const CONFIG_SCHEMA_VERSION: number = 3;
 
 export type BlePreferenceMode = 'unconfigured' | 'device' | 'skip';
 
@@ -15,6 +15,7 @@ export interface OnlineTrainingConfig {
   bleMode: BlePreferenceMode;
   bleMac: string;
   bleName: string;
+  tiltAverageSeconds: number;
 }
 
 export class OnlineTrainingConfigStore {
@@ -37,11 +38,15 @@ export class OnlineTrainingConfigStore {
         return null;
       }
       const parsed = JSON.parse(text) as OnlineTrainingConfig;
-      if (parsed.schemaVersion === 1) {
-        parsed.schemaVersion = CONFIG_SCHEMA_VERSION;
+      const oldSchemaVersion: number = parsed.schemaVersion;
+      if (oldSchemaVersion === 1) {
         parsed.bleMode = 'unconfigured';
         parsed.bleMac = '';
         parsed.bleName = '';
+      }
+      if (oldSchemaVersion === 1 || oldSchemaVersion === 2) {
+        parsed.schemaVersion = CONFIG_SCHEMA_VERSION;
+        parsed.tiltAverageSeconds = 60;
       }
       return this.isValid(parsed) ? parsed : null;
     } catch (error) {
@@ -64,7 +69,8 @@ export class OnlineTrainingConfigStore {
       groupColor: config.groupColor,
       bleMode: config.bleMode,
       bleMac: config.bleMac,
-      bleName: config.bleName
+      bleName: config.bleName,
+      tiltAverageSeconds: config.tiltAverageSeconds
     };
     this.writeText(JSON.stringify(normalized));
   }
@@ -84,6 +90,8 @@ export class OnlineTrainingConfigStore {
       config.mhmId.length > 0 &&
       config.mhmName.length > 0 &&
       config.groupColor.length > 0 &&
+      (config.tiltAverageSeconds === 1 || config.tiltAverageSeconds === 30 ||
+        config.tiltAverageSeconds === 60) &&
       (config.bleMode === 'unconfigured' || config.bleMode === 'skip' ||
         (config.bleMode === 'device' && config.bleMac.length > 0));
   }

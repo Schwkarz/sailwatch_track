@@ -60,6 +60,7 @@ export interface TrainingReport {
   rawDataPath: string;
   heartSeries: ChartPoint[];
   tiltSeries: ChartPoint[];
+  mode?: 'online' | 'offline';
 }
 
 export interface TrainingReportIndexItem {
@@ -70,6 +71,7 @@ export interface TrainingReportIndexItem {
   sampleCount: number;
   averageHeartRate: number;
   maxHeartRate: number;
+  mode?: 'online' | 'offline';
 }
 
 interface TrainingReportIndexFile {
@@ -94,6 +96,7 @@ interface OfflineSessionState {
   lastLatitude: number | null;
   heartSeries: ChartPoint[];
   tiltSeries: ChartPoint[];
+  mode: 'online' | 'offline';
 }
 
 export class OfflineTrainingStore {
@@ -115,7 +118,7 @@ export class OfflineTrainingStore {
     return this.currentSession !== null;
   }
 
-  public startSession(startedAt: number): string {
+  public startSession(startedAt: number, mode: 'online' | 'offline' = 'offline'): string {
     this.ensureStorage();
     const id: string = `session_${startedAt}`;
     const rawDataPath: string = this.getRawPath(id);
@@ -137,7 +140,8 @@ export class OfflineTrainingStore {
       lastLongitude: null,
       lastLatitude: null,
       heartSeries: [],
-      tiltSeries: []
+      tiltSeries: [],
+      mode: mode
     };
     this.currentSession = session;
     return id;
@@ -183,7 +187,8 @@ export class OfflineTrainingStore {
       distanceMeter: Math.round(session.distanceMeter),
       rawDataPath: session.rawDataPath,
       heartSeries: session.heartSeries,
-      tiltSeries: session.tiltSeries
+      tiltSeries: session.tiltSeries,
+      mode: session.mode
     };
 
     this.currentSession = null;
@@ -212,6 +217,9 @@ export class OfflineTrainingStore {
       }
       if (!report.tiltSeries) {
         report.tiltSeries = [];
+      }
+      if (!report.mode) {
+        report.mode = 'offline';
       }
       if (report.averageTilt === undefined) {
         report.averageTilt = 0;
@@ -349,7 +357,8 @@ export class OfflineTrainingStore {
       durationSec: report.durationSec,
       sampleCount: report.sampleCount,
       averageHeartRate: report.averageHeartRate,
-      maxHeartRate: report.maxHeartRate
+      maxHeartRate: report.maxHeartRate,
+      mode: report.mode ?? 'offline'
     };
     indexFile.reports.unshift(item);
     while (indexFile.reports.length > 50) {

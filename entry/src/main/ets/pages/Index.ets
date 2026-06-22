@@ -228,7 +228,7 @@ struct Index {
 
   //显示上传状态
   @State isStartUpload: boolean = false;
-  @State buttonString: string = '开始'
+  @State buttonString: string = '开始记录'
 
   dataUploader: DataUploader = new DataUploader();
   @State dataQueueLength : number = 0;
@@ -293,6 +293,7 @@ struct Index {
   private blePreferenceMode: BlePreferenceMode = 'unconfigured';
   private pendingPreferredBleMac: string = '';
   private isChangingOfflineBle: boolean = false;
+  private isChangingOnlineBle: boolean = false;
 
 
   @Builder
@@ -305,6 +306,8 @@ struct Index {
       this.offlineInterfaceBuilder('OfflineInterface')
     }else if (name == 'OfflineSettings') {
       this.offlineSettingsBuilder('OfflineSettings')
+    }else if (name == 'OnlineSettings') {
+      this.onlineSettingsBuilder('OnlineSettings')
     }else if (name == 'OfflineHistory') {
       this.offlineHistoryBuilder('OfflineHistory')
     }else if (name == 'OfflineReportDetail') {
@@ -422,11 +425,12 @@ struct Index {
     this.blePreferenceMode = config.bleMode;
     this.selectedBleMac = config.bleMac;
     this.selectedBleDeviceName = config.bleName;
+    this.offlineTiltAverageSeconds = config.tiltAverageSeconds;
   }
 
   saveOnlineTrainingConfig(): void {
     const config: OnlineTrainingConfig = {
-      schemaVersion: 1,
+      schemaVersion: 3,
       windBoatSource: windBoatsource,
       levelId: this.selectedLevelId,
       groupId: this.selectedGroupId,
@@ -435,7 +439,8 @@ struct Index {
       groupColor: this.selectedGroupColor,
       bleMode: this.blePreferenceMode,
       bleMac: this.selectedBleMac,
-      bleName: this.selectedBleDeviceName
+      bleName: this.selectedBleDeviceName,
+      tiltAverageSeconds: this.offlineTiltAverageSeconds
     };
     try {
       this.onlineConfigStore.write(config);
@@ -475,6 +480,13 @@ struct Index {
     this.selectedBleMac = '';
     this.selectedBleDeviceName = '';
     this.pushPage('WindInterfaceBuilder');
+  }
+
+  openOnlineMenu(): void {
+    if (this.isStartUpload || this.isOfflineRecording) {
+      return;
+    }
+    this.pushPage('OnlineSettings');
   }
 
   selectOfflineMode(): void {
@@ -598,8 +610,14 @@ struct Index {
     this.stopBleDeviceScan();
     if (this.appMode === APP_MODE_SERVER) {
       this.saveOnlineTrainingConfig();
-      this.pushPage('LoadInterface');
-      this.connectWatchMqtt();
+      if (this.isChangingOnlineBle) {
+        this.isChangingOnlineBle = false;
+        this.popPage();
+        this.popPage();
+      } else {
+        this.pushPage('LoadInterface');
+        this.connectWatchMqtt();
+      }
     } else if (this.appMode === APP_MODE_OFFLINE) {
       this.saveOfflineModeConfig();
       if (this.isChangingOfflineBle) {
@@ -628,8 +646,14 @@ struct Index {
     this.bleScanStatus = '已跳过姿态传感器';
     if (this.appMode === APP_MODE_SERVER) {
       this.saveOnlineTrainingConfig();
-      this.pushPage('LoadInterface');
-      this.connectWatchMqtt();
+      if (this.isChangingOnlineBle) {
+        this.isChangingOnlineBle = false;
+        this.popPage();
+        this.popPage();
+      } else {
+        this.pushPage('LoadInterface');
+        this.connectWatchMqtt();
+      }
     } else {
       this.saveOfflineModeConfig();
       if (this.isChangingOfflineBle) {
@@ -671,6 +695,21 @@ struct Index {
     this.pushPage('BleDeviceSelection');
   }
 
+  changeOnlineBleSensor(): void {
+    if (this.isStartUpload || this.isOfflineRecording) {
+      return;
+    }
+    this.wtBLE.disconnect();
+    this.selectedBleDeviceId = '';
+    this.selectedBleDeviceName = '';
+    this.selectedBleMac = '';
+    this.isbleConnected = false;
+    this.bleconnectionStatusColor = Color.Red;
+    this.hasRecentTiltData = false;
+    this.isChangingOnlineBle = true;
+    this.pushPage('BleDeviceSelection');
+  }
+
   setOfflineTiltAverageSeconds(seconds: number): void {
     if (seconds !== 1 && seconds !== 30 && seconds !== 60) {
       return;
@@ -679,7 +718,11 @@ struct Index {
     this.recentTiltValues = [];
     this.recentTiltAverage = 0;
     this.hasRecentTiltData = false;
-    this.saveOfflineModeConfig();
+    if (this.appMode === APP_MODE_SERVER) {
+      this.saveOnlineTrainingConfig();
+    } else {
+      this.saveOfflineModeConfig();
+    }
   }
 
   getOfflineTiltWindowText(): string {
@@ -1105,6 +1148,86 @@ struct Index {
   }
 
   @Builder
+  onlineSettingsBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('在线菜单')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .margin({ bottom: 12 })
+
+        Button('蓝牙传感器连接')
+          .fontSize(12)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x317aff)
+          .fontColor(Color.White)
+          .width(150)
+          .height(32)
+          .margin({ bottom: 10 })
+          .onClick(() => this.changeOnlineBleSensor())
+
+        Text(`平均倾角时间：${this.getOfflineTiltWindowText()}`)
+          .fontSize(11)
+          .fontColor(0x9fc7ff)
+          .margin({ bottom: 6 })
+
+        Row() {
+          Button('实时')
+            .fontSize(10)
+            .backgroundColor(this.offlineTiltAverageSeconds === 1 ? 0x2f9b67 : 0x555555)
+            .width(55)
+            .height(27)
+            .onClick(() => this.setOfflineTiltAverageSeconds(1))
+          Button('30s')
+            .fontSize(10)
+            .backgroundColor(this.offlineTiltAverageSeconds === 30 ? 0x2f9b67 : 0x555555)
+            .width(55)
+            .height(27)
+            .margin({ left: 5, right: 5 })
+            .onClick(() => this.setOfflineTiltAverageSeconds(30))
+          Button('1min')
+            .fontSize(10)
+            .backgroundColor(this.offlineTiltAverageSeconds === 60 ? 0x2f9b67 : 0x555555)
+            .width(55)
+            .height(27)
+            .onClick(() => this.setOfflineTiltAverageSeconds(60))
+        }
+        .margin({ bottom: 10 })
+
+        Button('查看历史报告')
+          .fontSize(12)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(32)
+          .margin({ bottom: 10 })
+          .onClick(() => this.openOfflineHistory())
+
+        Button('重新设置训练配置')
+          .fontSize(11)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x7a3030)
+          .fontColor(Color.White)
+          .width(150)
+          .height(30)
+          .onClick(() => this.openOnlineSettings())
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      this.popPage();
+      return true;
+    })
+  }
+
+  @Builder
   offlineHistoryBuilder(name: string) {
     NavDestination() {
       Column() {
@@ -1125,7 +1248,7 @@ struct Index {
               ForEach(this.offlineReports, (item: TrainingReportIndexItem) => {
                 Row() {
                   Column() {
-                    Text(formatShortDateTime(item.startedAt))
+                    Text(`${item.mode === 'online' ? '在线' : '离线'} ${formatShortDateTime(item.startedAt)}`)
                       .fontSize(13)
                       .fontColor(Color.White)
                       .maxLines(1)
@@ -1494,7 +1617,7 @@ struct Index {
           .fontColor(Color.Gray)
           .margin({ bottom: 5 })
 
-        Button('重新设置')
+        Button('菜单')
           .fontSize(9)
           .type(ButtonType.Capsule)
           .backgroundColor(this.isStartUpload ? 0x333333 : 0x555555)
@@ -1504,7 +1627,7 @@ struct Index {
           .enabled(!this.isStartUpload)
           .opacity(this.isStartUpload ? 0.45 : 1)
           .margin({ bottom: 3 })
-          .onClick(() => this.openOnlineSettings())
+          .onClick(() => this.openOnlineMenu())
 
         // 速度显示
         Text(`${(this.speed * 1.94).toFixed(1)}`)
@@ -1513,6 +1636,21 @@ struct Index {
           .fontColor(Color.White)
           .textAlign(TextAlign.Center)
           .margin({ bottom: 3 })
+
+        Row() {
+          Text(formatDuration(this.offlineElapsedSeconds))
+            .fontSize(9)
+            .fontColor(Color.White)
+          Text(`${this.getOfflineTiltWindowText()}均倾 ${this.hasRecentTiltData ? this.formatSignedAngle(this.recentTiltAverage) : '---'}`)
+            .fontSize(9)
+            .fontColor(0x9fc7ff)
+          Text(`心率 ${this.heartRate}`)
+            .fontSize(9)
+            .fontColor(0xff8b8b)
+        }
+        .width('90%')
+        .justifyContent(FlexAlign.SpaceBetween)
+        .margin({ bottom: 4 })
 
         // 上传按钮区域
         Column() {
@@ -1569,6 +1707,8 @@ struct Index {
       .backgroundColor(0x000000)
     }
     .hideTitleBar(true)
+    .onAppear(() => this.startOfflineTiltDisplay())
+    .onDisAppear(() => this.stopOfflineTiltDisplay())
     .onBackPressed(() => {
 
       return true;
@@ -1629,9 +1769,10 @@ struct Index {
     // 断开MQTT连接
     // this.mqttManager.destroy();
     this.stopUploadTimer();
+    this.stopOfflineRecording();
 
     this.isStartUpload = false;
-    this.buttonString = '开始';
+    this.buttonString = '开始记录';
     console.info('长按停止上传成功');
 
     // 启动冷却时间
@@ -1665,7 +1806,8 @@ struct Index {
       if (!this.isStartUpload) {
         //不在上传状态中
         this.isStartUpload = true;
-        this.buttonString = '停止';
+        this.buttonString = '长按停止';
+        this.startOfflineRecording();
         this.connectWatchMqtt();
         this.startMqttSend();
       }
@@ -1718,7 +1860,10 @@ struct Index {
     try {
       this.offlineStore.setup(this.getAbilityContext().filesDir);
       this.offlineStartedAt = Date.now();
-      this.offlineStore.startSession(this.offlineStartedAt);
+      this.offlineStore.startSession(
+        this.offlineStartedAt,
+        this.appMode === APP_MODE_SERVER ? 'online' : 'offline'
+      );
       this.offlineSampleCount = 0;
       this.offlineElapsedSeconds = 0;
       this.recentTiltValues = [];
@@ -1799,7 +1944,7 @@ struct Index {
     }
 
     const sample: OfflineRawSample = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       timestamp: now,
       heartRate: this.heartRate,
       gps: {

@@ -45,6 +45,9 @@ export class BleManagement {
 
   // 保存连接的设备实例
   private connectedDevice: ble.GattClientDevice | null = null;
+  // 只有 BLEConnectionStateChange 明确报告 state=2 才算真正连接。
+  // GATT 对象存在或能读取设备名，都不能证明链路仍然可用。
+  private isGattConnected: boolean = false;
   // 用一个数组保存一秒内读取到的传感器数据
   private last1sData: wt_SensorData[] = [];
 
@@ -105,17 +108,7 @@ export class BleManagement {
   }
 
   public isConnected(): boolean {
-
-    if(this.connectedDevice){
-
-      let name: Promise<string> = this.connectedDevice?.getDeviceName();
-      // console.log(`getDeviceName: ${name}`)
-      return true;
-
-    }
-    else {
-      return false;
-    }
+    return this.connectedDevice !== null && this.isGattConnected;
   }
 
   // 新增：断开连接回调函数
@@ -184,6 +177,7 @@ export class BleManagement {
   // 修改 confirmConnect 方法
   private confirmConnect(state: ble.BLEConnectionChangeState): void {
     if (state.state === 2) { // 2 表示已连接
+      this.isGattConnected = true;
       console.log('connected');
       this.readData();
       this.isScanning = false;
@@ -191,6 +185,7 @@ export class BleManagement {
         this.onConnectCallback();
       }
     } else if (state.state === 0) { // 0 表示断开连接
+      this.isGattConnected = false;
       console.log('disconnected');
       this.handleDisconnection();
     }
@@ -198,6 +193,7 @@ export class BleManagement {
 
   private handleDisconnection(): void {
     console.log('设备连接已断开');
+    this.isGattConnected = false;
     this.connectedDevice = null;
 
     // 调用断开连接回调
@@ -234,13 +230,13 @@ export class BleManagement {
   }
 
   async checkDeviceName(): Promise<boolean> {
-    if (!this.connectedDevice) {
+    if (!this.connectedDevice || !this.isGattConnected) {
       return false;
     }
     try {
       const name: string | undefined = await this.connectedDevice?.getDeviceName();
       if(!name){
-        return this.selectedDeviceId.length > 0;
+        return false;
       }
       console.log(`getDeviceName: ${name}`);
 
@@ -251,7 +247,7 @@ export class BleManagement {
       return name.toUpperCase().startsWith(WT901_DEVICE_PREFIX);
     } catch (error) {
       console.error("Error getting device name:", error);
-      return this.selectedDeviceId.length > 0;
+      return false;
     }
   }
 
@@ -340,6 +336,7 @@ export class BleManagement {
   private tryConnect(deviceID: string): boolean {
     console.log('try connect');
     try {
+      this.isGattConnected = false;
       if (this.connectedDevice) {
         try {
           this.connectedDevice.off('BLEConnectionStateChange', this.connectionStateCallback);
@@ -354,6 +351,7 @@ export class BleManagement {
       this.connectedDevice.connect();
       return true;
     } catch (error) {
+      this.isGattConnected = false;
       console.error(`连接蓝牙设备失败: ${JSON.stringify(error)}`);
       if (this.connectedDevice) {
         try {
@@ -540,6 +538,7 @@ export class BleManagement {
       console.error(`[BLE_MAC_PROBE] disconnect failed: ${JSON.stringify(error)}`);
     }
     this.connectedDevice = null;
+    this.isGattConnected = false;
   }
 
   // 实现读取数据的核心方法
@@ -929,6 +928,7 @@ export class BleManagement {
   // 断开连接和清理
   public disconnect(): void {
     this.disposed = true;
+    this.isGattConnected = false;
     this.cancelAutoMacProbe();
     this.stopScan();
     if (this.connectedDevice) {
