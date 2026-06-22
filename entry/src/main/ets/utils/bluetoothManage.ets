@@ -71,9 +71,9 @@ export class BleManagement {
   };
   private characteristicChangeCallback: ((changedChar: ble.BLECharacteristic) => void) | null = null;
   private macQueryLoggingUntil: number = 0;
-  private macAddressByDeviceName: Map<string, string> = new Map<string, string>();
+  private macAddressByDeviceId: Map<string, string> = new Map<string, string>();
   private autoMacProbeQueue: BleDeviceItem[] = [];
-  private autoMacProbeAttemptedNames: Set<string> = new Set<string>();
+  private autoMacProbeAttemptedIds: Set<string> = new Set<string>();
   private autoMacProbeActive: boolean = false;
   private autoMacProbeDeviceId: string = "";
   private autoMacProbeDeviceName: string = "";
@@ -271,7 +271,8 @@ export class BleManagement {
     this.disposed = false;
     this.discoveredDevices = [];
     this.autoMacProbeQueue = [];
-    this.autoMacProbeAttemptedNames.clear();
+    this.macAddressByDeviceId.clear();
+    this.autoMacProbeAttemptedIds.clear();
     this.autoMacProbeActive = false;
     console.log("start scan wt901 devices");
 
@@ -323,7 +324,7 @@ export class BleManagement {
         const discovered: BleDeviceItem = {
           deviceId: item.deviceId,
           deviceName: deviceName,
-          macAddress: this.macAddressByDeviceName.get(deviceName) ?? "",
+          macAddress: this.macAddressByDeviceId.get(item.deviceId) ?? "",
           rssi: item.rssi,
           lastSeen: Date.now()
         };
@@ -415,13 +416,13 @@ export class BleManagement {
   }
 
   private queueDeviceForMacProbe(device: BleDeviceItem): void {
-    if (device.macAddress.length > 0 || this.macAddressByDeviceName.has(device.deviceName) ||
-      this.autoMacProbeAttemptedNames.has(device.deviceName) ||
-      this.autoMacProbeDeviceName === device.deviceName) {
+    if (device.macAddress.length > 0 || this.macAddressByDeviceId.has(device.deviceId) ||
+      this.autoMacProbeAttemptedIds.has(device.deviceId) ||
+      this.autoMacProbeDeviceId === device.deviceId) {
       return;
     }
     for (let i: number = 0; i < this.autoMacProbeQueue.length; i++) {
-      if (this.autoMacProbeQueue[i].deviceName === device.deviceName) {
+      if (this.autoMacProbeQueue[i].deviceId === device.deviceId) {
         return;
       }
     }
@@ -447,7 +448,7 @@ export class BleManagement {
       this.resumeScanAfterMacProbe();
       return;
     }
-    if (this.macAddressByDeviceName.has(device.deviceName)) {
+    if (this.macAddressByDeviceId.has(device.deviceId)) {
       this.probeNextDeviceMac();
       return;
     }
@@ -456,7 +457,7 @@ export class BleManagement {
     this.autoMacProbeActive = true;
     this.autoMacProbeDeviceId = device.deviceId;
     this.autoMacProbeDeviceName = device.deviceName;
-    this.autoMacProbeAttemptedNames.add(device.deviceName);
+    this.autoMacProbeAttemptedIds.add(device.deviceId);
     this.macQueryDeviceId = device.deviceId;
     this.macQueryDeviceName = device.deviceName;
     console.info(`[BLE_MAC_PROBE] connecting device=${device.deviceName}, id=${device.deviceId}`);
@@ -622,11 +623,12 @@ export class BleManagement {
         this.connectedDevice!.on('BLECharacteristicChange', this.characteristicChangeCallback);
 
         if (writeCharacteristic) {
+          const queryDeviceId: string = this.macQueryDeviceId;
           const queryDeviceName: string = this.macQueryDeviceName;
           this.queryDeviceMacAddress(writeCharacteristic);
           setTimeout(() => {
-            if (this.connectedDevice && this.macQueryDeviceName === queryDeviceName &&
-              !this.macAddressByDeviceName.has(queryDeviceName)) {
+            if (this.connectedDevice && this.macQueryDeviceId === queryDeviceId &&
+              !this.macAddressByDeviceId.has(queryDeviceId)) {
               console.info(`[BLE_MAC_QUERY] retry device=${queryDeviceName}`);
               this.queryDeviceMacAddress(writeCharacteristic);
             }
@@ -694,7 +696,7 @@ export class BleManagement {
     let updated: boolean = false;
     for (let i: number = 0; i < this.discoveredDevices.length; i++) {
       const item: BleDeviceItem = this.discoveredDevices[i];
-      if (item.deviceId === this.macQueryDeviceId || item.deviceName === this.macQueryDeviceName) {
+      if (item.deviceId === this.macQueryDeviceId) {
         const resolved: BleDeviceItem = {
           deviceId: item.deviceId,
           deviceName: item.deviceName,
@@ -709,8 +711,8 @@ export class BleManagement {
       }
     }
     this.discoveredDevices = devices;
-    if (this.macQueryDeviceName.length > 0) {
-      this.macAddressByDeviceName.set(this.macQueryDeviceName, macAddress);
+    if (this.macQueryDeviceId.length > 0) {
+      this.macAddressByDeviceId.set(this.macQueryDeviceId, macAddress);
     }
     this.macQueryLoggingUntil = 0;
     console.info(`[BLE_MAC_QUERY] resolved device=${this.macQueryDeviceName}, mac=${macAddress}`);

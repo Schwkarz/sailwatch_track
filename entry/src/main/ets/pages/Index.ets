@@ -2287,7 +2287,7 @@ struct Index {
           console.info('所有权限已授权,开始监测');
           this.startHeartRateSensor(); // 心率订阅函数
           this.startLocationService(); // 定位
-          this.startAccelerometer();//加速度传感器
+          // this.startAccelerometer();//加速度传感器
           // this.startUploadTimer_queue(this.uploadInterval);//通过队列上传(http)
           // this.startCheckTimer();//定时监测服务器是否连接成功
           // this.startGpsTimer(300);//通过定时器定位
