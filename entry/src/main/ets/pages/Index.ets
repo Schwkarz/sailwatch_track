@@ -2806,7 +2806,7 @@ struct Index {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "heartrate",
-        data: `${this.myMqttUploadData.data.hr}|-1`
+        data: `${this.myMqttUploadData.data.hr[0]}|-1`
       }
       //发布心率原始数据
       await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(heartRate_original_data),1);
