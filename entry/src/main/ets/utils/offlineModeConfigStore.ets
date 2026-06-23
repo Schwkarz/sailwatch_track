@@ -1,7 +1,7 @@
 import { fileIo } from '@kit.CoreFileKit';
-import { BlePreferenceMode } from './onlineTrainingConfigStore';
+import { BlePreferenceMode, MonitorDisplayMetric } from './onlineTrainingConfigStore';
 
-const CONFIG_SCHEMA_VERSION: number = 1;
+const CONFIG_SCHEMA_VERSION: number = 2;
 
 export interface OfflineModeConfig {
   schemaVersion: number;
@@ -9,6 +9,7 @@ export interface OfflineModeConfig {
   bleMac: string;
   bleName: string;
   tiltAverageSeconds: number;
+  monitorDisplayMetric: MonitorDisplayMetric;
 }
 
 export class OfflineModeConfigStore {
@@ -31,6 +32,10 @@ export class OfflineModeConfigStore {
         return null;
       }
       const config: OfflineModeConfig = JSON.parse(text) as OfflineModeConfig;
+      if (config.schemaVersion === 1) {
+        config.schemaVersion = CONFIG_SCHEMA_VERSION;
+        config.monitorDisplayMetric = 'speed';
+      }
       return this.isValid(config) ? config : null;
     } catch (error) {
       console.error(`read offline mode config failed: ${JSON.stringify(error)}`);
@@ -47,7 +52,8 @@ export class OfflineModeConfigStore {
       bleMode: config.bleMode,
       bleMac: config.bleMac,
       bleName: config.bleName,
-      tiltAverageSeconds: config.tiltAverageSeconds
+      tiltAverageSeconds: config.tiltAverageSeconds,
+      monitorDisplayMetric: config.monitorDisplayMetric
     };
     this.writeText(JSON.stringify(normalized));
   }
@@ -56,8 +62,13 @@ export class OfflineModeConfigStore {
     return config !== null && config.schemaVersion === CONFIG_SCHEMA_VERSION &&
       (config.tiltAverageSeconds === 1 || config.tiltAverageSeconds === 30 ||
         config.tiltAverageSeconds === 60) &&
+      this.isValidDisplayMetric(config.monitorDisplayMetric) &&
       (config.bleMode === 'unconfigured' || config.bleMode === 'skip' ||
         (config.bleMode === 'device' && config.bleMac.length > 0));
+  }
+
+  private isValidDisplayMetric(metric: MonitorDisplayMetric): boolean {
+    return metric === 'heartRate' || metric === 'speed' || metric === 'tilt' || metric === 'heading';
   }
 
   private pathExists(path: string): boolean {

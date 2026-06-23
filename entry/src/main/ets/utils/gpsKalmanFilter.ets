@@ -25,6 +25,14 @@ interface AxisState {
   p11: number;
 }
 
+interface CandidatePoint {
+  longitude: number;
+  latitude: number;
+  accuracy: number;
+  speed: number;
+  timestamp: number;
+}
+
 export class GpsKalmanFilter {
   private initialized: boolean = false;
   private originLongitude: number = 0;
@@ -35,8 +43,13 @@ export class GpsKalmanFilter {
   private lastAcceptedTimestamp: number = 0;
   private stationaryCandidateCount: number = 0;
   private readonly maxAccuracyMeter: number = 20;
+  private readonly recaptureAccuracyMeter: number = 30;
+  private readonly recaptureMinPoints: number = 3;
+  private readonly recaptureClusterMeter: number = 30;
+  private readonly recaptureWindowSeconds: number = 10;
   private readonly maxPredictionSeconds: number = 3;
   private readonly accelerationNoise: number = 4;
+  private candidatePoints: CandidatePoint[] = [];
 
   public reset(): void {
     this.initialized = false;
@@ -47,18 +60,20 @@ export class GpsKalmanFilter {
     this.lastTimestamp = 0;
     this.lastAcceptedTimestamp = 0;
     this.stationaryCandidateCount = 0;
+    this.candidatePoints = [];
   }
 
   public update(measurement: GpsMeasurement): GpsFilterResult {
     if (!this.isCoordinateValid(measurement.longitude, measurement.latitude)) {
+      this.clearCandidates();
       return this.currentResult(false, false, 'invalid_coordinate', 0);
     }
 
     if (!this.initialized) {
       if (measurement.accuracy <= 0 || measurement.accuracy > this.maxAccuracyMeter) {
         return {
-          longitude: measurement.longitude,
-          latitude: measurement.latitude,
+          longitude: 0,
+          latitude: 0,
           speed: 0,
           accepted: false,
           predicted: false,
@@ -66,6 +81,7 @@ export class GpsKalmanFilter {
           innovationMeter: 0
         };
       }
+      this.clearCandidates();
       this.initialize(measurement);
       return this.currentResult(true, false, 'initialized', 0);
     }
@@ -90,12 +106,21 @@ export class GpsKalmanFilter {
     const allowedInnovation: number = Math.max(safeAccuracy * 3, expectedTravel + 15);
 
     if (measurement.accuracy <= 0 || measurement.accuracy > this.maxAccuracyMeter) {
+      const recaptured: GpsFilterResult | null = this.tryRecapture(measurement, innovationMeter);
+      if (recaptured !== null) {
+        return recaptured;
+      }
       return this.predictionOrHold(measurement.timestamp, 'poor_accuracy', innovationMeter);
     }
     if (innovationMeter > allowedInnovation) {
+      const recaptured: GpsFilterResult | null = this.tryRecapture(measurement, innovationMeter);
+      if (recaptured !== null) {
+        return recaptured;
+      }
       return this.predictionOrHold(measurement.timestamp, 'impossible_jump', innovationMeter);
     }
 
+    this.clearCandidates();
     const measurementNoise: number = safeAccuracy * safeAccuracy;
     this.updateAxis(this.east, local[0], measurementNoise);
     this.updateAxis(this.north, local[1], measurementNoise);
@@ -113,6 +138,91 @@ export class GpsKalmanFilter {
     }
     this.lastAcceptedTimestamp = measurement.timestamp;
     return this.currentResult(true, false, 'accepted', innovationMeter);
+  }
+
+  private tryRecapture(measurement: GpsMeasurement, innovationMeter: number): GpsFilterResult | null {
+    if (measurement.accuracy <= 0 || measurement.accuracy > this.recaptureAccuracyMeter) {
+      this.clearCandidates();
+      return null;
+    }
+    this.addCandidate(measurement);
+    if (!this.isCandidateClusterStable()) {
+      return null;
+    }
+
+    const center: CandidatePoint = this.candidateCenter();
+    this.initialize({
+      longitude: center.longitude,
+      latitude: center.latitude,
+      accuracy: center.accuracy,
+      speed: center.speed,
+      timestamp: center.timestamp
+    });
+    this.clearCandidates();
+    return this.currentResult(true, false, 'recaptured', innovationMeter);
+  }
+
+  private addCandidate(measurement: GpsMeasurement): void {
+    this.candidatePoints.push({
+      longitude: measurement.longitude,
+      latitude: measurement.latitude,
+      accuracy: measurement.accuracy,
+      speed: measurement.speed,
+      timestamp: measurement.timestamp
+    });
+    while (this.candidatePoints.length > this.recaptureMinPoints) {
+      this.candidatePoints.shift();
+    }
+  }
+
+  private isCandidateClusterStable(): boolean {
+    if (this.candidatePoints.length < this.recaptureMinPoints) {
+      return false;
+    }
+    const first: CandidatePoint = this.candidatePoints[0];
+    const last: CandidatePoint = this.candidatePoints[this.candidatePoints.length - 1];
+    if ((last.timestamp - first.timestamp) / 1000 > this.recaptureWindowSeconds) {
+      return false;
+    }
+    for (let i = 0; i < this.candidatePoints.length; i++) {
+      for (let j = i + 1; j < this.candidatePoints.length; j++) {
+        if (this.distanceBetween(
+          this.candidatePoints[i].latitude,
+          this.candidatePoints[i].longitude,
+          this.candidatePoints[j].latitude,
+          this.candidatePoints[j].longitude
+        ) > this.recaptureClusterMeter) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  private candidateCenter(): CandidatePoint {
+    let longitudeSum: number = 0;
+    let latitudeSum: number = 0;
+    let speedSum: number = 0;
+    let accuracySum: number = 0;
+    for (let i = 0; i < this.candidatePoints.length; i++) {
+      longitudeSum += this.candidatePoints[i].longitude;
+      latitudeSum += this.candidatePoints[i].latitude;
+      speedSum += this.candidatePoints[i].speed;
+      accuracySum += this.candidatePoints[i].accuracy;
+    }
+    const count: number = this.candidatePoints.length;
+    const last: CandidatePoint = this.candidatePoints[count - 1];
+    return {
+      longitude: longitudeSum / count,
+      latitude: latitudeSum / count,
+      speed: speedSum / count,
+      accuracy: accuracySum / count,
+      timestamp: last.timestamp
+    };
+  }
+
+  private clearCandidates(): void {
+    this.candidatePoints = [];
   }
 
   private initialize(measurement: GpsMeasurement): void {
@@ -237,5 +347,22 @@ export class GpsKalmanFilter {
   private isCoordinateValid(longitude: number, latitude: number): boolean {
     return longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90 &&
       longitude !== 0 && latitude !== 0;
+  }
+
+  private distanceBetween(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const earthRadius: number = 6371000;
+    const dLat: number = this.toRadians(lat2 - lat1);
+    const dLon: number = this.toRadians(lon2 - lon1);
+    const radLat1: number = this.toRadians(lat1);
+    const radLat2: number = this.toRadians(lat2);
+    const a: number = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(radLat1) * Math.cos(radLat2) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c: number = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return earthRadius * c;
+  }
+
+  private toRadians(degrees: number): number {
+    return degrees * Math.PI / 180;
   }
 }

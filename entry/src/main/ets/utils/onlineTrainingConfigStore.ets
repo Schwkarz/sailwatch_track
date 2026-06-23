@@ -1,8 +1,9 @@
 import { fileIo } from '@kit.CoreFileKit';
 
-const CONFIG_SCHEMA_VERSION: number = 3;
+const CONFIG_SCHEMA_VERSION: number = 4;
 
 export type BlePreferenceMode = 'unconfigured' | 'device' | 'skip';
+export type MonitorDisplayMetric = 'heartRate' | 'speed' | 'tilt' | 'heading';
 
 export interface OnlineTrainingConfig {
   schemaVersion: number;
@@ -16,6 +17,7 @@ export interface OnlineTrainingConfig {
   bleMac: string;
   bleName: string;
   tiltAverageSeconds: number;
+  monitorDisplayMetric: MonitorDisplayMetric;
 }
 
 export class OnlineTrainingConfigStore {
@@ -45,8 +47,11 @@ export class OnlineTrainingConfigStore {
         parsed.bleName = '';
       }
       if (oldSchemaVersion === 1 || oldSchemaVersion === 2) {
-        parsed.schemaVersion = CONFIG_SCHEMA_VERSION;
         parsed.tiltAverageSeconds = 60;
+      }
+      if (oldSchemaVersion >= 1 && oldSchemaVersion <= 3) {
+        parsed.schemaVersion = CONFIG_SCHEMA_VERSION;
+        parsed.monitorDisplayMetric = 'speed';
       }
       return this.isValid(parsed) ? parsed : null;
     } catch (error) {
@@ -70,7 +75,8 @@ export class OnlineTrainingConfigStore {
       bleMode: config.bleMode,
       bleMac: config.bleMac,
       bleName: config.bleName,
-      tiltAverageSeconds: config.tiltAverageSeconds
+      tiltAverageSeconds: config.tiltAverageSeconds,
+      monitorDisplayMetric: config.monitorDisplayMetric
     };
     this.writeText(JSON.stringify(normalized));
   }
@@ -92,8 +98,13 @@ export class OnlineTrainingConfigStore {
       config.groupColor.length > 0 &&
       (config.tiltAverageSeconds === 1 || config.tiltAverageSeconds === 30 ||
         config.tiltAverageSeconds === 60) &&
+      this.isValidDisplayMetric(config.monitorDisplayMetric) &&
       (config.bleMode === 'unconfigured' || config.bleMode === 'skip' ||
         (config.bleMode === 'device' && config.bleMac.length > 0));
+  }
+
+  private isValidDisplayMetric(metric: MonitorDisplayMetric): boolean {
+    return metric === 'heartRate' || metric === 'speed' || metric === 'tilt' || metric === 'heading';
   }
 
   private pathExists(path: string): boolean {

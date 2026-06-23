@@ -22,7 +22,8 @@ import {
 import {
   OnlineTrainingConfig,
   OnlineTrainingConfigStore,
-  BlePreferenceMode
+  BlePreferenceMode,
+  MonitorDisplayMetric
 } from '../utils/onlineTrainingConfigStore'
 import {
   OfflineModeConfig,
@@ -210,6 +211,7 @@ struct Index {
   private gpsFilter: GpsKalmanFilter = new GpsKalmanFilter();
   private latestGpsAccepted: boolean = false;
   private latestGpsFilterReason: string = 'uninitialized';
+  private latestGpsInnovationMeter: number = 0;
   private latestGpsReceivedAt: number = 0;
   sensor_data: Array<number> = [0,0,0,0,0,0]; //x,y,z加速度
   @State speed: number = 0;
@@ -276,7 +278,10 @@ struct Index {
   @State offlineButtonString: string = '开始';
   @State offlineSampleCount: number = 0;
   @State offlineElapsedSeconds: number = 0;
+  @State monitorDisplayMetric: MonitorDisplayMetric = 'speed';
   @State recentTiltAverage: number = 0;
+  @State liveDisplayPitch: number = 0;
+  @State liveDisplayRoll: number = 0;
   @State hasRecentTiltData: boolean = false;
   @State offlineStatus: string = '未开始';
   @State offlineRecordTimer: number | undefined = undefined;
@@ -304,6 +309,7 @@ struct Index {
   private pendingPreferredBleMac: string = '';
   private isChangingOfflineBle: boolean = false;
   private isChangingOnlineBle: boolean = false;
+  private hasAutoStartedOnlineUpload: boolean = false;
 
 
   @Builder
@@ -318,6 +324,8 @@ struct Index {
       this.offlineSettingsBuilder('OfflineSettings')
     }else if (name == 'OnlineSettings') {
       this.onlineSettingsBuilder('OnlineSettings')
+    }else if (name == 'DisplaySettings') {
+      this.displaySettingsBuilder('DisplaySettings')
     }else if (name == 'OfflineHistory') {
       this.offlineHistoryBuilder('OfflineHistory')
     }else if (name == 'OfflineReportDetail') {
@@ -412,6 +420,7 @@ struct Index {
       if (config.bleMode === 'unconfigured') {
         this.pushPage('BleDeviceSelection');
       } else {
+        this.hasAutoStartedOnlineUpload = false;
         this.pushPage('LoadInterface');
         this.connectWatchMqtt();
         this.applySavedBlePreference(config.bleMode, config.bleMac, config.bleName);
@@ -436,6 +445,7 @@ struct Index {
     this.selectedBleMac = config.bleMac;
     this.selectedBleDeviceName = config.bleName;
     this.offlineTiltAverageSeconds = config.tiltAverageSeconds;
+    this.monitorDisplayMetric = config.monitorDisplayMetric;
   }
 
   saveOnlineTrainingConfig(): void {
@@ -450,7 +460,8 @@ struct Index {
       bleMode: this.blePreferenceMode,
       bleMac: this.selectedBleMac,
       bleName: this.selectedBleDeviceName,
-      tiltAverageSeconds: this.offlineTiltAverageSeconds
+      tiltAverageSeconds: this.offlineTiltAverageSeconds,
+      monitorDisplayMetric: this.monitorDisplayMetric
     };
     try {
       this.onlineConfigStore.write(config);
@@ -489,6 +500,7 @@ struct Index {
     this.blePreferenceMode = 'unconfigured';
     this.selectedBleMac = '';
     this.selectedBleDeviceName = '';
+    this.hasAutoStartedOnlineUpload = false;
     this.pushPage('WindInterfaceBuilder');
   }
 
@@ -537,6 +549,7 @@ struct Index {
     this.selectedBleMac = config.bleMac;
     this.selectedBleDeviceName = config.bleName;
     this.offlineTiltAverageSeconds = config.tiltAverageSeconds;
+    this.monitorDisplayMetric = config.monitorDisplayMetric;
   }
 
   saveOfflineModeConfig(): void {
@@ -545,7 +558,8 @@ struct Index {
       bleMode: this.blePreferenceMode,
       bleMac: this.selectedBleMac,
       bleName: this.selectedBleDeviceName,
-      tiltAverageSeconds: this.offlineTiltAverageSeconds
+      tiltAverageSeconds: this.offlineTiltAverageSeconds,
+      monitorDisplayMetric: this.monitorDisplayMetric
     };
     try {
       this.offlineModeConfigStore.write(config);
@@ -625,6 +639,7 @@ struct Index {
         this.popPage();
         this.popPage();
       } else {
+        this.hasAutoStartedOnlineUpload = false;
         this.pushPage('LoadInterface');
         this.connectWatchMqtt();
       }
@@ -661,6 +676,7 @@ struct Index {
         this.popPage();
         this.popPage();
       } else {
+        this.hasAutoStartedOnlineUpload = false;
         this.pushPage('LoadInterface');
         this.connectWatchMqtt();
       }
@@ -746,6 +762,75 @@ struct Index {
     return '1min';
   }
 
+  openDisplaySettings(): void {
+    if (this.isStartUpload || this.isOfflineRecording) {
+      return;
+    }
+    this.pushPage('DisplaySettings');
+  }
+
+  setMonitorDisplayMetric(metric: MonitorDisplayMetric): void {
+    this.monitorDisplayMetric = metric;
+    if (this.appMode === APP_MODE_SERVER) {
+      this.saveOnlineTrainingConfig();
+    } else if (this.appMode === APP_MODE_OFFLINE) {
+      this.saveOfflineModeConfig();
+    }
+  }
+
+  getMonitorDisplayTitle(): string {
+    if (this.monitorDisplayMetric === 'heartRate') {
+      return '心率';
+    }
+    if (this.monitorDisplayMetric === 'tilt') {
+      return '倾角';
+    }
+    if (this.monitorDisplayMetric === 'heading') {
+      return '航向';
+    }
+    return '速度';
+  }
+
+  getMonitorDisplayMainText(): string {
+    if (this.isMonitorTiltDisplay()) {
+      return `俯仰 ${this.formatSignedAngle(this.liveDisplayPitch)}`;
+    }
+    if (this.monitorDisplayMetric === 'heartRate') {
+      return `${this.heartRate}`;
+    }
+    if (this.monitorDisplayMetric === 'heading') {
+      return this.headingT === null ? '---' : `${Math.trunc(this.headingT)}°`;
+    }
+    if (this.monitorDisplayMetric === 'tilt') {
+      return `俯仰 ${this.formatSignedAngle(-this.wtBLE.ble_sensorData.angle.pitch)}`;
+    }
+    return `${(this.filteredSpeed * 1.943844).toFixed(1)}`;
+  }
+
+  getMonitorDisplaySecondText(): string {
+    if (this.isMonitorTiltDisplay()) {
+      return `平衡 ${this.formatSignedAngle(this.liveDisplayRoll)}`;
+    }
+    if (this.monitorDisplayMetric === 'tilt') {
+      return `平衡 ${this.formatSignedAngle(-this.wtBLE.ble_sensorData.angle.roll)}`;
+    }
+    return '';
+  }
+
+  isMonitorTiltDisplay(): boolean {
+    return this.monitorDisplayMetric === 'tilt';
+  }
+
+  getMonitorDisplayFontSize(): number {
+    if (this.monitorDisplayMetric === 'tilt') {
+      return 34;
+    }
+    if (this.monitorDisplayMetric === 'heading') {
+      return 58;
+    }
+    return 80;
+  }
+
   startOfflineTiltDisplay(): void {
     this.stopOfflineTiltDisplay();
     this.refreshOfflineTiltDisplay();
@@ -762,12 +847,14 @@ struct Index {
   }
 
   refreshOfflineTiltDisplay(): void {
-    if (this.isOfflineRecording) {
+    if (this.isOfflineRecording && this.monitorDisplayMetric !== 'tilt') {
       return;
     }
     const now: number = Date.now();
     if (this.isOfflineSensorDataAvailable(now)) {
       const roll: number = this.wtBLE.ble_sensorData.angle.roll;
+      this.liveDisplayPitch = -this.wtBLE.ble_sensorData.angle.pitch;
+      this.liveDisplayRoll = -roll;
       if (this.offlineTiltAverageSeconds === 1) {
         this.recentTiltValues = [roll];
         this.recentTiltAverage = roll;
@@ -779,6 +866,8 @@ struct Index {
     } else {
       this.recentTiltValues = [];
       this.recentTiltAverage = 0;
+      this.liveDisplayPitch = 0;
+      this.liveDisplayRoll = 0;
       this.hasRecentTiltData = false;
       this.lastTiltAverageSampleAt = 0;
     }
@@ -1032,11 +1121,53 @@ struct Index {
           .opacity(this.isOfflineRecording ? 0.45 : 1)
           .onClick(() => this.openOfflineSettings())
 
-        Text(`${(this.filteredSpeed * 1.943844).toFixed(1)}`)
-          .fontSize(80)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-          .textAlign(TextAlign.Center)
+        Column() {
+          Text(this.getMonitorDisplayTitle())
+            .fontSize(12)
+            .fontColor(0x9fc7ff)
+            .margin({ bottom: 2 })
+          if (this.monitorDisplayMetric === 'tilt') {
+            Row() {
+              Text('俯仰')
+                .fontSize(18)
+                .fontColor(0x9fc7ff)
+                .width(44)
+                .textAlign(TextAlign.Start)
+              Text(this.formatSignedAngle(this.liveDisplayPitch))
+                .fontSize(this.getMonitorDisplayFontSize())
+                .fontWeight(FontWeight.Medium)
+                .fontColor(Color.White)
+                .width(96)
+                .textAlign(TextAlign.End)
+            }
+            .width(150)
+            .justifyContent(FlexAlign.SpaceBetween)
+            Row() {
+              Text('平衡')
+                .fontSize(18)
+                .fontColor(0x9fc7ff)
+                .width(44)
+                .textAlign(TextAlign.Start)
+              Text(this.formatSignedAngle(this.liveDisplayRoll))
+                .fontSize(this.getMonitorDisplayFontSize())
+                .fontWeight(FontWeight.Medium)
+                .fontColor(Color.White)
+                .width(96)
+                .textAlign(TextAlign.End)
+            }
+            .width(150)
+            .justifyContent(FlexAlign.SpaceBetween)
+          } else {
+            Text(this.getMonitorDisplayMainText())
+              .fontSize(this.getMonitorDisplayFontSize())
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .textAlign(TextAlign.Center)
+          }
+        }
+        .alignItems(HorizontalAlign.Center)
+        .height(112)
+        .justifyContent(FlexAlign.Center)
 
         Row() {
           Text(formatDuration(this.offlineElapsedSeconds))
@@ -1054,6 +1185,7 @@ struct Index {
           .width('90%')
           .justifyContent(FlexAlign.Center)
           .margin({ bottom: 4 })
+          .visibility(Visibility.None)
 
         Stack() {
           Button(this.isOfflineRecording ? '长按停止' : '开始记录')
@@ -1061,8 +1193,8 @@ struct Index {
             .type(ButtonType.Capsule)
             .backgroundColor(this.isOfflineRecording ? 0xd64c4c : 0x2f9b67)
             .fontColor(Color.White)
-            .width(100)
-            .height(35)
+            .width(90)
+            .height(32)
             .onClick(() => this.onOfflineButtonClick())
             .onTouch((event: TouchEvent) => {
               if (event.type === TouchType.Down) {
@@ -1123,6 +1255,7 @@ struct Index {
           .fontSize(11)
           .fontColor(0x9fc7ff)
           .margin({ bottom: 7 })
+          .visibility(Visibility.None)
 
         Row() {
           Button('实时')
@@ -1146,6 +1279,7 @@ struct Index {
             .onClick(() => this.setOfflineTiltAverageSeconds(60))
         }
         .margin({ bottom: 16 })
+        .visibility(Visibility.None)
 
         Button('查看历史报告')
           .fontSize(13)
@@ -1179,6 +1313,16 @@ struct Index {
           .fontColor(Color.White)
           .margin({ bottom: 12 })
 
+        Button('显示参数')
+          .fontSize(12)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x2f9b67)
+          .fontColor(Color.White)
+          .width(150)
+          .height(32)
+          .margin({ bottom: 10 })
+          .onClick(() => this.openDisplaySettings())
+
         Button('蓝牙传感器连接')
           .fontSize(12)
           .type(ButtonType.Capsule)
@@ -1193,6 +1337,7 @@ struct Index {
           .fontSize(11)
           .fontColor(0x9fc7ff)
           .margin({ bottom: 6 })
+          .visibility(Visibility.None)
 
         Row() {
           Button('实时')
@@ -1216,6 +1361,7 @@ struct Index {
             .onClick(() => this.setOfflineTiltAverageSeconds(60))
         }
         .margin({ bottom: 10 })
+        .visibility(Visibility.None)
 
         Button('查看历史报告')
           .fontSize(12)
@@ -1234,7 +1380,79 @@ struct Index {
           .fontColor(Color.White)
           .width(150)
           .height(30)
+          .margin({ bottom: 10 })
           .onClick(() => this.openOnlineSettings())
+
+        Button('离线模式')
+          .fontSize(12)
+          .type(ButtonType.Capsule)
+          .backgroundColor(0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(32)
+          .onClick(() => this.selectOfflineMode())
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(0x000000)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      this.popPage();
+      return true;
+    })
+  }
+
+  @Builder
+  displaySettingsBuilder(name: string) {
+    NavDestination() {
+      Column() {
+        Text('显示参数')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .margin({ bottom: 14 })
+
+        Button('心率')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.monitorDisplayMetric === 'heartRate' ? 0x2f9b67 : 0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(34)
+          .margin({ bottom: 9 })
+          .onClick(() => this.setMonitorDisplayMetric('heartRate'))
+
+        Button('速度 kn')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.monitorDisplayMetric === 'speed' ? 0x2f9b67 : 0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(34)
+          .margin({ bottom: 9 })
+          .onClick(() => this.setMonitorDisplayMetric('speed'))
+
+        Button('倾角')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.monitorDisplayMetric === 'tilt' ? 0x2f9b67 : 0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(34)
+          .margin({ bottom: 9 })
+          .onClick(() => this.setMonitorDisplayMetric('tilt'))
+
+        Button('航向')
+          .fontSize(13)
+          .type(ButtonType.Capsule)
+          .backgroundColor(this.monitorDisplayMetric === 'heading' ? 0x2f9b67 : 0x555555)
+          .fontColor(Color.White)
+          .width(150)
+          .height(34)
+          .onClick(() => this.setMonitorDisplayMetric('heading'))
       }
       .width('100%')
       .height('100%')
@@ -1638,26 +1856,68 @@ struct Index {
           .fontSize(12)
           .fontColor(Color.Gray)
           .margin({ bottom: 5 })
+        Row() {
+          Button('菜单')
+            .fontSize(12)
+            .type(ButtonType.Capsule)
+            .backgroundColor(this.isStartUpload ? 0x333333 : 0x555555)
+            .fontColor(Color.White)
+            .width(60)
+            .height(20)
+            .enabled(!this.isStartUpload)
+            .opacity(this.isStartUpload ? 0.45 : 1)
+            .margin({ bottom: 3 ,right : 3})
+            .onClick(() => this.openOnlineMenu())
 
-        Button('菜单')
-          .fontSize(9)
-          .type(ButtonType.Capsule)
-          .backgroundColor(this.isStartUpload ? 0x333333 : 0x555555)
-          .fontColor(Color.White)
-          .width(68)
-          .height(20)
-          .enabled(!this.isStartUpload)
-          .opacity(this.isStartUpload ? 0.45 : 1)
-          .margin({ bottom: 3 })
-          .onClick(() => this.openOnlineMenu())
+          Text(this.getMonitorDisplayTitle())
+            .fontSize(12)
+            .fontColor(0x9fc7ff)
+            .margin({ bottom: 2 })
+        }
 
-        // 速度显示
-        Text(`${(this.filteredSpeed * 1.943844).toFixed(1)}`)
-          .fontSize(80)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-          .textAlign(TextAlign.Center)
-          .margin({ bottom: 3 })
+        if (this.monitorDisplayMetric === 'tilt') {
+          Column() {
+            Row() {
+              Text('俯仰')
+                .fontSize(18)
+                .fontColor(0x9fc7ff)
+                .width(38)
+                .textAlign(TextAlign.Start)
+              Text(this.formatSignedAngle(this.liveDisplayPitch))
+                .fontSize(this.getMonitorDisplayFontSize())
+                .fontWeight(FontWeight.Medium)
+                .fontColor(Color.White)
+                .width(120)
+                .textAlign(TextAlign.End)
+            }
+            .width(150)
+            .justifyContent(FlexAlign.SpaceBetween)
+            Row() {
+              Text('平衡')
+                .fontSize(18)
+                .fontColor(0x9fc7ff)
+                .width(38)
+                .textAlign(TextAlign.Start)
+              Text(this.formatSignedAngle(this.liveDisplayRoll))
+                .fontSize(this.getMonitorDisplayFontSize())
+                .fontWeight(FontWeight.Medium)
+                .fontColor(Color.White)
+                .width(120)
+                .textAlign(TextAlign.End)
+            }
+            .width(150)
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .height(82)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          Text(this.getMonitorDisplayMainText())
+            .fontSize(this.getMonitorDisplayFontSize())
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .textAlign(TextAlign.Center)
+        }
 
         Row() {
           Text(formatDuration(this.offlineElapsedSeconds))
@@ -1675,6 +1935,7 @@ struct Index {
         .width('90%')
         .justifyContent(FlexAlign.Center)
         .margin({ bottom: 4 })
+        .visibility(Visibility.None)
 
 
         // 上传按钮区域
@@ -1685,10 +1946,11 @@ struct Index {
               .type(ButtonType.Capsule)
               .stateEffect(!this.isCoolingDown)
               .backgroundColor(this.isCoolingDown ? 0x888888 :
-                (this.isLongPressing ? 0xff0000 : 0x317aff))
+                (!this.isStartUpload ? 0x555555 : (this.isLongPressing ? 0xff0000 : 0x317aff)))
               .fontColor(Color.White)
               .width(120)
               .height(40)
+              .enabled(!this.isCoolingDown)
               .opacity(this.isCoolingDown ? 0.6 : 1)
               .onClick((event?: ClickEvent) => this.onButtonClick(event))
               .onTouch((event: TouchEvent) => {
@@ -1732,7 +1994,10 @@ struct Index {
       .backgroundColor(0x000000)
     }
     .hideTitleBar(true)
-    .onAppear(() => this.startOfflineTiltDisplay())
+    .onAppear(() => {
+      this.startOfflineTiltDisplay();
+      this.autoStartOnlineUploadOnce();
+    })
     .onDisAppear(() => this.stopOfflineTiltDisplay())
     .onBackPressed(() => {
 
@@ -1797,7 +2062,7 @@ struct Index {
     this.stopOfflineRecording();
 
     this.isStartUpload = false;
-    this.buttonString = '开始记录';
+    this.buttonString = '已停止';
     console.info('长按停止上传成功');
 
     // 启动冷却时间
@@ -1837,6 +2102,25 @@ struct Index {
         this.startMqttSend();
       }
     }
+  }
+
+  startOnlineUpload(): void {
+    if (this.isStartUpload || this.isCoolingDown) {
+      return;
+    }
+    this.isStartUpload = true;
+    this.buttonString = '长按停止';
+    this.startOfflineRecording();
+    this.connectWatchMqtt();
+    this.startMqttSend();
+  }
+
+  autoStartOnlineUploadOnce(): void {
+    if (this.hasAutoStartedOnlineUpload) {
+      return;
+    }
+    this.hasAutoStartedOnlineUpload = true;
+    this.startOnlineUpload();
   }
 
   onOfflineButtonClick(): void {
@@ -1973,11 +2257,11 @@ struct Index {
       timestamp: now,
       heartRate: this.heartRate,
       gps: {
-        longitude: this.filteredLocation[0] !== 0 ? this.filteredLocation[0] : this.location[0],
-        latitude: this.filteredLocation[1] !== 0 ? this.filteredLocation[1] : this.location[1],
+        longitude: this.filteredLocation[0],
+        latitude: this.filteredLocation[1],
         rawLongitude: this.location[0],
         rawLatitude: this.location[1],
-        speed: this.speed,
+        speed: this.filteredSpeed,
         headingT: this.headingT,
         accuracy: this.gps_accuracy,
         accepted: this.latestGpsAccepted && now - this.latestGpsReceivedAt <= 3000,
@@ -2149,7 +2433,7 @@ struct Index {
 
   formatSignedAngle(value: number): string {
     const prefix: string = value > 0 ? '+' : '';
-    return `${prefix}${value.toFixed(1)}°`;
+    return `${prefix}${value.toFixed(1)}`;
   }
 
   wtBLE: BleManagement = new BleManagement(); // 用于连接并读取wt姿态传感器
@@ -2337,10 +2621,6 @@ struct Index {
 
   //监测时间3s，屏幕常量关闭
   aboutToAppear() {
-    if (!this.hasInitiatedJump) {
-      this.hasInitiatedJump = true;
-      this.pushPage('ModeSelection')
-    }
     this.setupBleCallbacks();
     try {
       this.offlineStore.setup(this.getAbilityContext().filesDir);
@@ -2368,6 +2648,10 @@ struct Index {
     // this.listenToScreen();
     this.check_test();
     this.mqttManager.setHost(user_url);
+    if (!this.hasInitiatedJump) {
+      this.hasInitiatedJump = true;
+      this.selectServerMode();
+    }
     this.requestPermissionAndStart();
     // this.loadLevels();
     this.startCheckTimer(3000);
@@ -2467,6 +2751,10 @@ struct Index {
           }
         }
 
+        if (!this.isBleSelectionVisible && this.hasBluetoothPermission && this.pendingPreferredBleMac.length > 0) {
+          this.startBleDeviceScan();
+        }
+
         // 判断是否全部授权
         const allGranted = data.authResults.every(result => result === 0);
         if (allGranted) {
@@ -2542,10 +2830,18 @@ struct Index {
       this.myMqttUploadData.data.mHmName = this.selectedmhmName;
       this.myMqttUploadData.data.color = this.selectedGroupColor;
 
-      const generalLongitude: number = this.filteredLocation[0] !== 0 ?
-        this.filteredLocation[0] : this.location[0];
-      const generalLatitude: number = this.filteredLocation[1] !== 0 ?
-        this.filteredLocation[1] : this.location[1];
+      // MQTT 航行数据需要实时反映手表当前 GPS；滤波坐标只用于本地轨迹/报告，避免滤波 hold 时上报经纬度卡住。
+      const processedLongitude: number = this.filteredLocation[0];
+      const processedLatitude: number = this.filteredLocation[1];
+      const processedSpeed: number = this.filteredSpeed;
+      const hasProcessedGps: boolean = processedLongitude !== 0 && processedLatitude !== 0;
+      if (!hasProcessedGps) {
+        this.diagnosticLogStore.warn('GPS_UPLOAD',
+          `skip_no_processed_gps,rawLon=${this.location[0].toFixed(6)},rawLat=${this.location[1].toFixed(6)},` +
+          `accuracy=${this.gps_accuracy.toFixed(1)},reason=${this.latestGpsFilterReason}`);
+      }
+      const generalLongitude: number = hasProcessedGps ? processedLongitude : 0;
+      const generalLatitude: number = hasProcessedGps ? processedLatitude : 0;
       this.myMqttUploadData.data.longitude = String(generalLongitude.toFixed(6));
       this.myMqttUploadData.data.latitude = String(generalLatitude.toFixed(6));
 
@@ -2553,7 +2849,7 @@ struct Index {
       this.myMqttUploadData.data.rol = Math.trunc(( - this.wtBLE.ble_sensorData.angle.roll));
       this.myMqttUploadData.data.pitch = Math.trunc((- this.wtBLE.ble_sensorData.angle.pitch));
 
-      this.myMqttUploadData.data.speed = toFixedNumber(this.speed * 100); //cm/s，保留4位小数
+      this.myMqttUploadData.data.speed = toFixedNumber(processedSpeed * 100); //cm/s，保留4位小数
 
       this.myMqttUploadData.data.headingT = this.headingT;
 
@@ -2753,10 +3049,12 @@ struct Index {
       }
 
       // 发布航行数据消息
-      await this.mqttManager.publish(`mobile/up/general-train/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(this.myMqttUploadData),1);
+      if (hasProcessedGps) {
+        await this.mqttManager.publish(`mobile/up/general-train/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(this.myMqttUploadData),1);
+      // console.log(`mobile/up/general-train/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(this.myMqttUploadData),1)
 
       let gps_valid: string = "V";
-      if(this.latestGpsAccepted && Date.now() - this.latestGpsReceivedAt <= 3000 &&
+      if(hasProcessedGps && this.latestGpsAccepted && Date.now() - this.latestGpsReceivedAt <= 3000 &&
         this.gps_accuracy < gps_accuracy_set){
         gps_valid = "A";
       }
@@ -2764,14 +3062,15 @@ struct Index {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "gps",
-        data: `${gps_valid},${this.location[0].toFixed(6)},${this.location[1].toFixed(6)},${(this.speed * 100).toFixed(4)},${this.myMqttUploadData.data.headingT},${declination}`
+        data: `${gps_valid},${generalLongitude.toFixed(6)},${generalLatitude.toFixed(6)},${(processedSpeed * 100).toFixed(4)},${this.myMqttUploadData.data.headingT},${declination}`
       }
       if(this.myMqttUploadData.data.speed === 0){
-        gps_original_data.data = `${gps_valid},${this.location[0].toFixed(6)},${this.location[1].toFixed(6)},${(this.speed * 100).toFixed(1)},${this.myMqttUploadData.data.headingT},${declination}`
+        gps_original_data.data = `${gps_valid},${generalLongitude.toFixed(6)},${generalLatitude.toFixed(6)},${(processedSpeed * 100).toFixed(1)},${this.myMqttUploadData.data.headingT},${declination}`
       }
 
       // 发布航行原始数据
-      await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(gps_original_data),1);
+        await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(gps_original_data),1);
+      }
 
       let last1sSensorData: wt_SensorData[] = this.wtBLE.getLast1sData();
       let last1sSensorString: string = this.wtBLE.formatAngleDataForPosture(last1sSensorData)
@@ -2785,7 +3084,11 @@ struct Index {
       this.diagnosticLogStore.info('SAMPLE',
         `mqttConnected=${this.mqttManager.isConnected},mqttQueue=${this.mqttManager.getPendingMessageCount()},` +
         `gpsAccepted=${this.latestGpsAccepted},gpsReason=${this.latestGpsFilterReason},` +
-        `gpsAccuracy=${this.gps_accuracy.toFixed(1)},gpsAgeMs=${this.latestGpsReceivedAt > 0 ? Date.now() - this.latestGpsReceivedAt : -1},` +
+        `gpsAccuracy=${this.gps_accuracy.toFixed(1)},gpsInnovation=${this.latestGpsInnovationMeter.toFixed(1)},` +
+        `gpsAgeMs=${this.latestGpsReceivedAt > 0 ? Date.now() - this.latestGpsReceivedAt : -1},` +
+        `rawLon=${this.location[0].toFixed(6)},rawLat=${this.location[1].toFixed(6)},` +
+        `processedLon=${generalLongitude.toFixed(6)},processedLat=${generalLatitude.toFixed(6)},` +
+        `rawSpeed=${this.speed.toFixed(2)},processedSpeed=${processedSpeed.toFixed(2)},` +
         `bleConnected=${this.isbleConnected},bleNotifications=${bleDiagnostics.notificationCount},` +
         `bleBytes=${bleDiagnostics.receivedBytes},bleFrames=${bleDiagnostics.parsedFrameCount},` +
         `bleInvalid=${bleDiagnostics.invalidByteCount},bleBuffered=${bleDiagnostics.bufferedBytes},` +
@@ -2802,14 +3105,17 @@ struct Index {
         await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(posture_original_data),1);
       }
 
+      const heartRateOriginalValue: number = (this.heartRate !== 255 && this.heartRate !== 0) ?
+        this.heartRate : -1;
       let heartRate_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
         ts: this.myMqttUploadData.ts,
         dataType: "heartrate",
-        data: `${this.myMqttUploadData.data.hr[0]}|-1`
+        data: `${heartRateOriginalValue}|-1`
       }
       //发布心率原始数据
       await this.mqttManager.publish(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(heartRate_original_data),1);
+      // console.log(`mobile/up/original/${tenantCode}/${this.selectedLevelId}/${this.selectedmhmId}`, JSON.stringify(heartRate_original_data),1)
 
       let wind_original_data: original_data = {
         mHmId: this.myMqttUploadData.mHmId,
@@ -2906,64 +3212,64 @@ struct Index {
     }
   }
 
-  //添加定时上传(队列)
-  startUploadTimer_queue(intervalMs : number = 5000) {
-
-    this.stopUploadTimer();
-
-    console.log(`角度: roll: ${this.wtBLE.ble_sensorData.angle.roll},pitch: ${this.wtBLE.ble_sensorData.angle.pitch},yaw: ${this.wtBLE.ble_sensorData.angle.yaw}`);
-
-    this.uploadTimer = setInterval(() => {
-
-      let ble_Data: ble_SensorData = {
-        header : this.wtBLE.ble_sensorData.header,
-        flag : this.wtBLE.ble_sensorData.flag,
-        acceleration : {
-          x : this.wtBLE.ble_sensorData.acceleration.x,
-          y : this.wtBLE.ble_sensorData.acceleration.y,
-          z : this.wtBLE.ble_sensorData.acceleration.z
-        },
-        angularVelocity : {
-          x : this.wtBLE.ble_sensorData.angularVelocity.x,
-          y : this.wtBLE.ble_sensorData.angularVelocity.y,
-          z : this.wtBLE.ble_sensorData.angularVelocity.z
-        },
-        angle : {
-          roll : this.wtBLE.ble_sensorData.angle.roll,
-          pitch : this.wtBLE.ble_sensorData.angle.pitch,
-          yaw : this.wtBLE.ble_sensorData.angle.yaw
-        },
-        rawData : [],
-        timestamp : Date.now()
-      }
-
-      let sensor_data: UploadData = {
-        heartRate: this.heartRate,
-        location: [...this.location],
-        speed: this.speed,
-        sensorData: [...this.sensor_data.slice(0,3)],
-        timestamp: Date.now(),
-        lag_time: dur_time,
-        gps_change: location_change,
-        ble_SensorData: ble_Data
-      };
-
-      this.dataUploader.addDataToQueue(sensor_data);
-      this.dataQueueLength = this.dataUploader.dataQueueLength;
-      // this.dataUploader.addDataToQueue(sensor_data);
-
-      // if(this.dataUploader.isNetworkAvailable){
-      //   this.isConnected = true;
-      //   this.connectionStatusColor = Color.Green;
-      // }
-      // else {
-      //   this.isConnected = false;
-      //   this.connectionStatusColor = Color.Red;
-      // }
-
-    }, intervalMs);
-    console.info(`启动定时上传，间隔: ${intervalMs}ms`);
-  }
+  // //添加定时上传(队列)
+  // startUploadTimer_queue(intervalMs : number = 5000) {
+  //
+  //   this.stopUploadTimer();
+  //
+  //   console.log(`角度: roll: ${this.wtBLE.ble_sensorData.angle.roll},pitch: ${this.wtBLE.ble_sensorData.angle.pitch},yaw: ${this.wtBLE.ble_sensorData.angle.yaw}`);
+  //
+  //   this.uploadTimer = setInterval(() => {
+  //
+  //     let ble_Data: ble_SensorData = {
+  //       header : this.wtBLE.ble_sensorData.header,
+  //       flag : this.wtBLE.ble_sensorData.flag,
+  //       acceleration : {
+  //         x : this.wtBLE.ble_sensorData.acceleration.x,
+  //         y : this.wtBLE.ble_sensorData.acceleration.y,
+  //         z : this.wtBLE.ble_sensorData.acceleration.z
+  //       },
+  //       angularVelocity : {
+  //         x : this.wtBLE.ble_sensorData.angularVelocity.x,
+  //         y : this.wtBLE.ble_sensorData.angularVelocity.y,
+  //         z : this.wtBLE.ble_sensorData.angularVelocity.z
+  //       },
+  //       angle : {
+  //         roll : this.wtBLE.ble_sensorData.angle.roll,
+  //         pitch : this.wtBLE.ble_sensorData.angle.pitch,
+  //         yaw : this.wtBLE.ble_sensorData.angle.yaw
+  //       },
+  //       rawData : [],
+  //       timestamp : Date.now()
+  //     }
+  //
+  //     let sensor_data: UploadData = {
+  //       heartRate: this.heartRate,
+  //       location: [...this.location],
+  //       speed: this.speed,
+  //       sensorData: [...this.sensor_data.slice(0,3)],
+  //       timestamp: Date.now(),
+  //       lag_time: dur_time,
+  //       gps_change: location_change,
+  //       ble_SensorData: ble_Data
+  //     };
+  //
+  //     this.dataUploader.addDataToQueue(sensor_data);
+  //     this.dataQueueLength = this.dataUploader.dataQueueLength;
+  //     // this.dataUploader.addDataToQueue(sensor_data);
+  //
+  //     // if(this.dataUploader.isNetworkAvailable){
+  //     //   this.isConnected = true;
+  //     //   this.connectionStatusColor = Color.Green;
+  //     // }
+  //     // else {
+  //     //   this.isConnected = false;
+  //     //   this.connectionStatusColor = Color.Red;
+  //     // }
+  //
+  //   }, intervalMs);
+  //   console.info(`启动定时上传，间隔: ${intervalMs}ms`);
+  // }
 
   stopUploadTimer() {
     if (this.uploadTimer !== undefined) {
@@ -3034,6 +3340,7 @@ struct Index {
         });
         this.latestGpsAccepted = filterResult.accepted;
         this.latestGpsFilterReason = filterResult.reason;
+        this.latestGpsInnovationMeter = filterResult.innovationMeter;
         if (filterResult.longitude !== 0 && filterResult.latitude !== 0) {
           this.filteredLocation = [filterResult.longitude, filterResult.latitude];
         }
@@ -3041,6 +3348,19 @@ struct Index {
         if (!filterResult.accepted) {
           console.warn(`[GPS_FILTER] reason=${filterResult.reason}, accuracy=${location.accuracy}, ` +
             `innovation=${filterResult.innovationMeter.toFixed(1)}m`);
+          this.diagnosticLogStore.warn('GPS_FILTER',
+            `reason=${filterResult.reason},accuracy=${location.accuracy.toFixed(1)},` +
+            `innovation=${filterResult.innovationMeter.toFixed(1)},` +
+            `rawLon=${location.longitude.toFixed(6)},rawLat=${location.latitude.toFixed(6)},` +
+            `processedLon=${this.filteredLocation[0].toFixed(6)},processedLat=${this.filteredLocation[1].toFixed(6)},` +
+            `rawSpeed=${location.speed.toFixed(2)},processedSpeed=${filterResult.speed.toFixed(2)}`);
+        } else if (filterResult.reason === 'recaptured') {
+          this.diagnosticLogStore.warn('GPS_FILTER',
+            `reason=recaptured,accuracy=${location.accuracy.toFixed(1)},` +
+            `innovation=${filterResult.innovationMeter.toFixed(1)},` +
+            `rawLon=${location.longitude.toFixed(6)},rawLat=${location.latitude.toFixed(6)},` +
+            `processedLon=${filterResult.longitude.toFixed(6)},processedLat=${filterResult.latitude.toFixed(6)},` +
+            `rawSpeed=${location.speed.toFixed(2)},processedSpeed=${filterResult.speed.toFixed(2)}`);
         }
 
         if(location.directionAccuracy){
@@ -3060,27 +3380,44 @@ struct Index {
     // throw new Error('Method not implemented.');
   }
 
-  //通过定时器读取位置信息
-  async startGpsTimer(intervalMs: number = 1000) {
-    this.stopGpsTimer();
-    gpsTimer = setInterval(async () => {
-      try {
-        const location = await geoLocationManager.getCurrentLocation(this.timer_request);
-        // console.info(`经度：${location.longitude}, 纬度：${location.latitude}`);
-        this.location[0] = location.longitude;
-        this.location[1] = location.latitude;
-        console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude, '速度=', location.speed)
-      } catch (err) {
-        console.error(`获取GPS失败: ${JSON.stringify(err)}`);
-      }
-    }, intervalMs);
-  }
-  async stopGpsTimer() {
-    if (gpsTimer !== undefined) {
-      clearInterval(gpsTimer);
-      gpsTimer = undefined;
-    }
-  }
+  // //通过定时器读取位置信息
+  // async startGpsTimer(intervalMs: number = 1000) {
+  //   this.stopGpsTimer();
+  //   gpsTimer = setInterval(async () => {
+  //     try {
+  //       const location = await geoLocationManager.getCurrentLocation(this.timer_request);
+  //       // console.info(`经度：${location.longitude}, 纬度：${location.latitude}`);
+  //       this.location[0] = location.longitude;
+  //       this.location[1] = location.latitude;
+  //       this.speed = location.speed;
+  //       this.gps_accuracy = location.accuracy;
+  //       this.latestGpsReceivedAt = Date.now();
+  //       const filterResult: GpsFilterResult = this.gpsFilter.update({
+  //         longitude: location.longitude,
+  //         latitude: location.latitude,
+  //         accuracy: location.accuracy,
+  //         speed: location.speed,
+  //         timestamp: location.timeStamp > 0 ? location.timeStamp : Date.now()
+  //       });
+  //       this.latestGpsAccepted = filterResult.accepted;
+  //       this.latestGpsFilterReason = filterResult.reason;
+  //       this.latestGpsInnovationMeter = filterResult.innovationMeter;
+  //       if (filterResult.longitude !== 0 && filterResult.latitude !== 0) {
+  //         this.filteredLocation = [filterResult.longitude, filterResult.latitude];
+  //       }
+  //       this.filteredSpeed = filterResult.speed;
+  //       console.log('实时定位：纬度=', location.latitude, ' 经度=', location.longitude, '速度=', location.speed)
+  //     } catch (err) {
+  //       console.error(`获取GPS失败: ${JSON.stringify(err)}`);
+  //     }
+  //   }, intervalMs);
+  // }
+  // async stopGpsTimer() {
+  //   if (gpsTimer !== undefined) {
+  //     clearInterval(gpsTimer);
+  //     gpsTimer = undefined;
+  //   }
+  // }
 
   startHeartRateSensor() {
     try {
@@ -3219,7 +3556,7 @@ struct Index {
       console.error("errCode:" + JSON.stringify(err));
     }
     this.keepScreenOn(false);
-    this.stopGpsTimer();
+    // this.stopGpsTimer();
   }
 }
 
