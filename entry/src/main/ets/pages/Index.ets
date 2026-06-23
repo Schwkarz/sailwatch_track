@@ -1945,8 +1945,8 @@ struct Index {
               .fontSize(16)
               .type(ButtonType.Capsule)
               .stateEffect(!this.isCoolingDown)
-              .backgroundColor(this.isCoolingDown ? 0x888888 :
-                (!this.isStartUpload ? 0x555555 : (this.isLongPressing ? 0xff0000 : 0x317aff)))
+              .backgroundColor(this.isCoolingDown ? 0x317AFF :
+                (!this.isStartUpload ? 0x317AFF : (this.isLongPressing ? 0xff0000 : 0x555555))) //0x555555灰色
               .fontColor(Color.White)
               .width(120)
               .height(40)
@@ -2062,7 +2062,7 @@ struct Index {
     this.stopOfflineRecording();
 
     this.isStartUpload = false;
-    this.buttonString = '已停止';
+    this.buttonString = '开始上传';
     console.info('长按停止上传成功');
 
     // 启动冷却时间

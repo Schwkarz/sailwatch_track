@@ -116,7 +116,11 @@ export class MqttManagement {
 
   private disposed = false;         // 已销毁标记
   private connecting = false;       // 正在连接标记
+  private closing = false;          // 正在断开/销毁，阻止并发操作
   private manualReconnect = true;   // 与 automaticReconnect 二选一
+  private clientGeneration = 0;     // 使旧 client 的 JS 回调失效
+  private activeSubscriptions: Set<string> = new Set<string>();
+  private subscribingTopics: Set<string> = new Set<string>();
 
   private clientId: string = '';    //客户端ID
   private readonly MAX_PENDING_MESSAGES: number = 3600;
@@ -221,40 +225,49 @@ export class MqttManagement {
 
 
   async connect(): Promise<boolean> {
-    if (this.disposed) return false;
+    if (this.disposed || this.closing) return false;
     if (this.isConnected) return true;
     if (this.connecting) return false;
+
+    this.manualReconnect = true;
     this.connecting = true;
     try {
-      // 若已有旧实例但未完全断开，先清理
+      // 必须完整销毁旧 native client，不能仅把 JS 引用置空。
       if (this.mqttClient) {
         await this.safeDisconnectAndClear("preconnect");
       }
+      if (this.disposed || this.closing) return false;
 
       const clientId = this.clientId;
       const protocol = this.useSSL ? 'mqtts' : 'mqtt';
       const url = `${protocol}://${this.host}:${this.port}`;
-
-      this.mqttClient = new MqttClient({
+      const generation = ++this.clientGeneration;
+      const client = new MqttClient({
         url,
         clientId,
         persistenceType: 1,
       });
+      this.mqttClient = client;
+      this.activeSubscriptions.clear();
+      this.subscribingTopics.clear();
+      this.setupEventListeners(client, generation);
 
-      this.setupEventListeners(); // 注册监听器
-
-      // 拼接最终选项（避免重复设置 automaticReconnect）
       const finalOptions: MqttConnectOptions = {
         connectTimeout: this.connectOptions.connectTimeout ?? 5,
         keepAliveInterval: this.connectOptions.keepAliveInterval ?? 60,
         cleanSession: this.connectOptions.cleanSession ?? true,
         sslOptions: { enableServerCertAuth: true },
-        automaticReconnect: this.connectOptions.automaticReconnect ?? false,
+        automaticReconnect: false,
         userName: this.connectOptions.userName,
         password: this.connectOptions.password,
       };
 
-      const response = await this.mqttClient.connect(finalOptions);
+      const response = await client.connect(finalOptions);
+      if (this.disposed || generation !== this.clientGeneration || this.mqttClient !== client) {
+        try { await client.destroy(); } catch (_) {}
+        return false;
+      }
+
       console.info(`MQTT连接成功: ${JSON.stringify(response)}`);
       this.diagnostic('INFO', `connected host=${this.host}:${this.port} pending=${this.pendingMessages.length}`);
       this.isConnected = true;
@@ -271,7 +284,7 @@ export class MqttManagement {
       return false;
     } finally {
       this.connecting = false;
-      if (!this.isConnected && this.manualReconnect && !this.disposed) {
+      if (!this.isConnected && this.manualReconnect && !this.disposed && !this.closing) {
         this.scheduleReconnect();
       }
     }
@@ -281,30 +294,36 @@ export class MqttManagement {
     return this.connecting;
   }
 
-  // 注销监听器（若 SDK 支持置空/移除；没有则用 disposed 标记短路）
-  private removeEventListeners(): void {
-    if (!this.mqttClient) return;
-    try {
-      // 若有对应 API，示意如下：
-      this.mqttClient.messageArrived((_err: Error, _msg: MqttMessage) => { if (this.disposed) return; });
-      this.mqttClient.connectLost((_err: Error) => { });
-
-    } catch {}
-  }
-
-  // 统一的安全断开 + 清理
+  // 完整关闭 native client。messageArrived/connectLost 没有 off API，不能用“空回调”冒充注销。
   private async safeDisconnectAndClear(tag = ""): Promise<void> {
-    this.removeEventListeners(); // 先移除监听，避免断开过程中仍回调
-    if (this.mqttClient && this.isConnected) {
-      try {
-        await this.mqttClient.disconnect();      // 必须等待断开完成
-        console.info(`MQTT连接已断开(${tag})`);
-      } catch (e) {
-        console.error(`断开连接失败(${tag}): ${JSON.stringify(e)}`);
-      }
+    const client = this.mqttClient;
+    if (!client) {
+      this.isConnected = false;
+      return;
     }
-    this.isConnected = false;
+
+    // 先使旧回调失效，并阻止新的 publish/subscribe 使用该实例。
+    ++this.clientGeneration;
     this.mqttClient = null;
+    this.isConnected = false;
+    this.activeSubscriptions.clear();
+    this.subscribingTopics.clear();
+
+    try {
+      // 即使本地状态已经是 false，也要让 native 层完成断开。
+      await client.disconnect();
+      console.info(`MQTT连接已断开(${tag})`);
+    } catch (e) {
+      console.warn(`MQTT disconnect(${tag})未完成: ${JSON.stringify(e)}`);
+    }
+
+    try {
+      // 关键：释放 native client、工作线程和 EventListener。
+      await client.destroy();
+      console.info(`MQTT客户端已销毁(${tag})`);
+    } catch (e) {
+      console.error(`销毁MQTT客户端失败(${tag}): ${JSON.stringify(e)}`);
+    }
   }
 
   private scheduleReconnect(): void {
@@ -344,36 +363,37 @@ export class MqttManagement {
   /**
    * 设置事件监听器（基于回调函数）
    */
-  private setupEventListeners(): void {
-    if (!this.mqttClient) return;
+  private setupEventListeners(client: MqttClient, generation: number): void {
+    client.connectLost((err: Error) => {
+      // 旧 client 的延迟回调不能修改新连接状态。
+      if (this.disposed || generation !== this.clientGeneration || this.mqttClient !== client) return;
 
-    // 1. 连接丢失回调 - 参数是 Error 类型
-    this.mqttClient.connectLost((err: Error) => {
       console.info('MQTT连接已断开');
       this.diagnostic('ERROR', `connection lost reason=${err ? err.message : 'unknown'} pending=${this.pendingMessages.length}`);
       if (err) {
         console.error(`连接断开原因: ${err.message}`);
       }
       this.isConnected = false;
-      if (this.manualReconnect && !this.disposed) {
+      this.activeSubscriptions.clear();
+      this.subscribingTopics.clear();
+      if (this.manualReconnect && !this.closing) {
         this.scheduleReconnect();
       }
     });
 
-    // 2. 消息到达回调 - 参数是 MqttMessage 类型
-    this.mqttClient.messageArrived(
-      (err: Error, message: MqttMessage) => {
-        if(err) {
-          console.error(`接收数据出错：${err.message}`)
-        }
+    client.messageArrived((err: Error, message: MqttMessage) => {
+      if (this.disposed || generation !== this.clientGeneration || this.mqttClient !== client) return;
+      if (err) {
+        console.error(`接收数据出错：${err.message}`);
+        return;
+      }
+      if (!message) return;
 
-        // 假设 MqttMessage 包含 topic 和 payload 属性
-        const topic = message.topic;
-        const messageData = message.payload;
-        console.info(`收到消息 [${topic}]: ${messageData}`);
-        this.handleIncomingMessage(topic, messageData);
-
-      });
+      const topic = message.topic;
+      const messageData = message.payload;
+      console.info(`收到消息 [${topic}]: ${messageData}`);
+      this.handleIncomingMessage(topic, messageData);
+    });
   }
 
   /**
@@ -506,25 +526,38 @@ export class MqttManagement {
   }
 
   private async publishDirect(message: PendingMqttMessage): Promise<boolean> {
-    if (this.mqttClient && this.isConnected) {
+    const client = this.mqttClient;
+    const generation = this.clientGeneration;
+    if (!client || !this.isConnected || this.closing || this.disposed) return false;
+
+    try {
+      await client.publish({
+        topic: message.topic,
+        payload: message.payload,
+        qos: message.qos,
+      });
+      if (generation !== this.clientGeneration || this.mqttClient !== client) return false;
+      console.info(`消息已发布 [${message.topic}]: ${message.payload}`);
+      return true;
+    } catch (err) {
+      console.error(`发布失败: ${JSON.stringify(err)}`);
+      this.diagnostic('ERROR', `publish failed topic=${message.topic} pending=${this.pendingMessages.length} error=${JSON.stringify(err)}`);
+
+      // 单次 publish 超时不等同于连接一定断开，以 native 状态为准。
+      let connected = false;
       try {
-        await this.mqttClient.publish({
-          topic: message.topic,
-          payload: message.payload,
-          qos: message.qos,
-        });
-        console.info(`消息已发布 [${message.topic}]: ${message.payload}`);
-        return true;
-      } catch (err) {
-        console.error(`发布失败: ${JSON.stringify(err)}`);
-        this.diagnostic('ERROR', `publish failed topic=${message.topic} pending=${this.pendingMessages.length} error=${JSON.stringify(err)}`);
-        this.isConnected = false;
-        if (this.manualReconnect && !this.disposed) {
+        connected = await client.isConnected();
+      } catch (_) {
+        connected = false;
+      }
+      if (generation === this.clientGeneration && this.mqttClient === client) {
+        this.isConnected = connected;
+        if (!connected && this.manualReconnect && !this.disposed && !this.closing) {
           this.scheduleReconnect();
         }
       }
+      return false;
     }
-    return false;
   }
 
   private async flushPendingMessages(): Promise<void> {
@@ -557,13 +590,24 @@ export class MqttManagement {
 
   async subscribe(topic: string, qos: MqttQos = 1): Promise<void> {
     this.rememberSubscription(topic, qos);
-    if (this.mqttClient && this.isConnected) {
-      try {
-        await this.mqttClient.subscribe({ topic, qos });
+    const key = `${topic}|${qos}`;
+    if (this.activeSubscriptions.has(key) || this.subscribingTopics.has(key)) return;
+
+    const client = this.mqttClient;
+    const generation = this.clientGeneration;
+    if (!client || !this.isConnected || this.closing || this.disposed) return;
+
+    this.subscribingTopics.add(key);
+    try {
+      await client.subscribe({ topic, qos });
+      if (generation === this.clientGeneration && this.mqttClient === client) {
+        this.activeSubscriptions.add(key);
         console.info(`已订阅: ${topic}`);
-      } catch (err) {
-        console.error(`订阅失败: ${JSON.stringify(err)}`);
       }
+    } catch (err) {
+      console.error(`订阅失败: ${JSON.stringify(err)}`);
+    } finally {
+      this.subscribingTopics.delete(key);
     }
   }
 
@@ -582,13 +626,18 @@ export class MqttManagement {
   }
 
   private async restoreSubscriptions(): Promise<void> {
-    if (!this.mqttClient || !this.isConnected) {
-      return;
-    }
+    const client = this.mqttClient;
+    const generation = this.clientGeneration;
+    if (!client || !this.isConnected) return;
+
     for (let i: number = 0; i < this.subscriptions.length; i++) {
       const subscription: MqttSubscription = this.subscriptions[i];
+      const key = `${subscription.topic}|${subscription.qos}`;
+      if (this.activeSubscriptions.has(key)) continue;
       try {
-        await this.mqttClient.subscribe({ topic: subscription.topic, qos: subscription.qos });
+        await client.subscribe({ topic: subscription.topic, qos: subscription.qos });
+        if (generation !== this.clientGeneration || this.mqttClient !== client) return;
+        this.activeSubscriptions.add(key);
         console.info(`已恢复订阅: ${subscription.topic}`);
       } catch (error) {
         console.error(`恢复订阅失败: ${formatErrorMessage(error as Error)}`);
@@ -631,17 +680,22 @@ export class MqttManagement {
   }
 
   async disconnect(): Promise<void> {
-    // 手动调用断开时，也要确保不再重连
+    this.manualReconnect = false;
+    this.closing = true;
     this.clearReconnectTimer();
-    await this.safeDisconnectAndClear("manual");
+    try {
+      await this.safeDisconnectAndClear("manual");
+    } finally {
+      this.closing = false;
+    }
   }
 
   async destroy(): Promise<void> {
-    // 标记为已销毁，所有回调短路
-    this.removeEventListeners();
+    // 顺序很重要：先阻止所有新任务和重连，再销毁 native client。
     this.disposed = true;
+    this.manualReconnect = false;
+    this.closing = true;
     this.clearReconnectTimer();
-    // 等待断开完成，确保 native 层不再派发
     await this.safeDisconnectAndClear("destroy");
   }
 }
