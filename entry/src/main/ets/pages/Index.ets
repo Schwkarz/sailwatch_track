@@ -30,7 +30,7 @@ import {
   OfflineModeConfigStore
 } from '../utils/offlineModeConfigStore'
 import { GpsKalmanFilter, GpsFilterResult } from '../utils/gpsKalmanFilter'
-import { DiagnosticLogStore } from '../utils/diagnosticLogStore'
+import { DiagnosticLogStore, diagnosticLogStore as sharedDiagnosticLogStore } from '../utils/diagnosticLogStore'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -70,6 +70,7 @@ let gpsTimer: number | undefined = undefined;
 
 let last_wind: WindDataMessage | undefined = undefined;
 let last_last_wind: WindDataMessage | undefined = undefined;
+let lastDiagnosticDisplayState: number = -1;
 
 const APP_MODE_UNSELECTED: number = 0;
 const APP_MODE_SERVER: number = 1;
@@ -158,14 +159,23 @@ function startTimerNotification(interval: number = 1000): number {
       const errCode: number = err.code;
       if (errCode) {
         console.error(`Failed to obtain all the display objects. Code: ${err.code}, message: ${err.message}`);
+        sharedDiagnosticLogStore.error('SCREEN',
+          `getAllDisplays failed code=${err.code},message=${err.message}`);
         return;
       }
       if(data && data.length > 0){
-        if(data[0].state == 1){
+        const currentDisplayState: number = data[0].state;
+        if (currentDisplayState !== lastDiagnosticDisplayState) {
+          lastDiagnosticDisplayState = currentDisplayState;
+          sharedDiagnosticLogStore.info('SCREEN',
+            `displayState=${currentDisplayState},screenOff=${currentDisplayState === 1}`);
+        }
+        if(currentDisplayState == 1){
           sendNotification();
         }
       }else {
         console.error('no displaydata')
+        sharedDiagnosticLogStore.warn('SCREEN', 'getAllDisplays returned no display data');
         return;
       }
       // console.info(`Succeeded in obtaining all the display objects. Data: ${JSON.stringify(data[0].state)}`);
@@ -297,7 +307,7 @@ struct Index {
   offlineStore: OfflineTrainingStore = new OfflineTrainingStore();
   onlineConfigStore: OnlineTrainingConfigStore = new OnlineTrainingConfigStore();
   offlineModeConfigStore: OfflineModeConfigStore = new OfflineModeConfigStore();
-  diagnosticLogStore: DiagnosticLogStore = new DiagnosticLogStore();
+  diagnosticLogStore: DiagnosticLogStore = sharedDiagnosticLogStore;
   private hasSetupBleCallbacks: boolean = false;
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
@@ -2063,6 +2073,7 @@ struct Index {
 
     this.isStartUpload = false;
     this.buttonString = '开始上传';
+    this.diagnosticLogStore.recordMonitoring(false, 'online', 'manual_long_press');
     console.info('长按停止上传成功');
 
     // 启动冷却时间
@@ -2097,6 +2108,7 @@ struct Index {
         //不在上传状态中
         this.isStartUpload = true;
         this.buttonString = '长按停止';
+        this.diagnosticLogStore.recordMonitoring(true, 'online', 'manual_restart');
         this.startOfflineRecording();
         this.connectWatchMqtt();
         this.startMqttSend();
@@ -2110,6 +2122,7 @@ struct Index {
     }
     this.isStartUpload = true;
     this.buttonString = '长按停止';
+    this.diagnosticLogStore.recordMonitoring(true, 'online', 'auto_or_menu_start');
     this.startOfflineRecording();
     this.connectWatchMqtt();
     this.startMqttSend();
@@ -2132,6 +2145,9 @@ struct Index {
       return;
     }
     this.startOfflineRecording();
+    if (this.isOfflineRecording) {
+      this.diagnosticLogStore.recordMonitoring(true, 'offline', 'offline_start');
+    }
   }
 
   startOfflineLongPressDetection(): void {
@@ -2149,6 +2165,7 @@ struct Index {
         this.offlineStopCompletedByLongPress = true;
         this.stopOfflineLongPressDetection();
         this.stopOfflineRecording();
+        this.diagnosticLogStore.recordMonitoring(false, 'offline', 'manual_long_press');
       }
     }, 50);
   }
@@ -2191,6 +2208,7 @@ struct Index {
     } catch (error) {
       this.offlineStatus = '启动失败';
       console.error(`启动离线记录失败: ${JSON.stringify(error)}`);
+      this.diagnosticLogStore.error('OFFLINE_RECORD', `start failed error=${JSON.stringify(error)}`);
     }
   }
 
@@ -2216,6 +2234,7 @@ struct Index {
       const stopError: Error = error as Error;
       this.offlineStatus = '报告生成失败';
       console.error(`停止离线记录失败: ${stopError.message}`);
+      this.diagnosticLogStore.error('OFFLINE_RECORD', `stop failed error=${JSON.stringify(error)}`);
     } finally {
       this.isOfflineRecording = false;
       this.offlineButtonString = '开始';
@@ -2627,6 +2646,7 @@ struct Index {
       this.onlineConfigStore.setup(this.getAbilityContext().filesDir);
       this.offlineModeConfigStore.setup(this.getAbilityContext().filesDir);
       this.diagnosticLogStore.setup(this.getAbilityContext().filesDir);
+      this.diagnosticLogStore.recordLifecycle('page_about_to_appear');
       this.mqttManager.setDiagnosticLogger((level: string, tag: string, message: string): void => {
         if (level === 'ERROR') {
           this.diagnosticLogStore.error(tag, message);
@@ -2636,10 +2656,15 @@ struct Index {
           this.diagnosticLogStore.info(tag, message);
         }
       });
-      this.diagnosticLogStore.info('APP', `files ready log=${this.diagnosticLogStore.getLogPath()}`);
+      this.diagnosticLogStore.info('APP',
+        `files ready log=${this.diagnosticLogStore.getLogPath()},` +
+        `previousLog=${this.diagnosticLogStore.getPreviousLogPath()},` +
+        `state=${this.diagnosticLogStore.getStatePath()},` +
+        `previousState=${this.diagnosticLogStore.getPreviousStatePath()}`);
       this.refreshOfflineReports();
     } catch (error) {
       console.error(`初始化离线存储失败: ${JSON.stringify(error)}`);
+      this.diagnosticLogStore.error('APP', `storage initialization failed error=${JSON.stringify(error)}`);
     }
     notificationManager.requestEnableNotification(requestEnableNotificationCallback);
     this.stopNotificationTimer();
@@ -2684,8 +2709,10 @@ struct Index {
     try {
       const win = await window.getLastWindow(this.getAbilityContext());
       await win.setWindowKeepScreenOn(enable);
+      this.diagnosticLogStore.info('SCREEN', `keepScreenOn=${enable},result=success`);
     } catch (err) {
       console.error('设置屏幕常亮失败:', JSON.stringify(err));
+      this.diagnosticLogStore.error('SCREEN', `keepScreenOn=${enable},result=failed,error=${JSON.stringify(err)}`);
     }
   }
 
@@ -3182,6 +3209,14 @@ struct Index {
         this.connectionStatusColor = Color.Gray;
       }
 
+      const diagnosticMode: string = this.appMode === APP_MODE_SERVER ? 'online' :
+        (this.appMode === APP_MODE_OFFLINE ? 'offline' : 'unselected');
+      this.diagnosticLogStore.heartbeat(
+        `mode=${diagnosticMode},uploadActive=${this.isStartUpload},localRecording=${this.isOfflineRecording},` +
+        `mqttConnected=${this.mqttManager.isConnected},mqttQueue=${this.mqttManager.getPendingMessageCount()},` +
+        `gpsAgeMs=${this.latestGpsReceivedAt > 0 ? Date.now() - this.latestGpsReceivedAt : -1},` +
+        `bleSelected=${this.selectedBleDeviceId.length > 0},bleConnected=${this.isbleConnected}`);
+
       if (this.selectedBleDeviceId.length === 0) {
         return;
       }
@@ -3528,6 +3563,12 @@ struct Index {
   }
 
   async aboutToDisappear() {
+    const wasMonitoring: boolean = this.isStartUpload || this.isOfflineRecording;
+    this.diagnosticLogStore.recordLifecycle('page_about_to_disappear',
+      `monitoringActive=${wasMonitoring},mode=${this.appMode}`);
+    if (wasMonitoring) {
+      this.diagnosticLogStore.warn('APP_LIFECYCLE', 'Index disappeared while monitoring was active');
+    }
     try {
       this.stopLongPressDetection();
       this.stopOfflineLongPressDetection();
@@ -3554,8 +3595,11 @@ struct Index {
       console.log('定位服务关闭');
     } catch (err) {
       console.error("errCode:" + JSON.stringify(err));
+      this.diagnosticLogStore.error('APP_LIFECYCLE', `page cleanup failed error=${JSON.stringify(err)}`);
     }
-    this.keepScreenOn(false);
+    await this.keepScreenOn(false);
+    this.diagnosticLogStore.recordLifecycle('page_cleanup_complete',
+      `monitoringWasActive=${wasMonitoring}`);
     // this.stopGpsTimer();
   }
 }

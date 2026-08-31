@@ -1,4 +1,12 @@
-import { MqttClient, MqttConnectOptions, MqttMessage, MqttQos, MqttSubscribeOptions } from '@ohos/mqtt';
+import {
+  MqttClient,
+  MqttClientOptions,
+  MqttConnectOptions,
+  MqttMessage,
+  MqttQos,
+  MqttResponse,
+  MqttSubscribeOptions
+} from '@ohos/mqtt';
 import http from '@ohos.net.http';
 import { JSON } from '@kit.ArkTS';
 
@@ -11,6 +19,10 @@ interface PendingMqttMessage {
 interface MqttSubscription {
   topic: string;
   qos: MqttQos;
+}
+
+class SailWatchMqttSslOptions {
+  enableServerCertAuth: boolean = true;
 }
 
 function formatErrorMessage(error: Error): string {
@@ -154,7 +166,7 @@ export class MqttManagement {
     connectTimeout: 5,
     keepAliveInterval: 60,
     cleanSession: true,
-    sslOptions: { enableServerCertAuth: true },
+    sslOptions: new SailWatchMqttSslOptions(),
   };
 
   /**
@@ -242,11 +254,12 @@ export class MqttManagement {
       const protocol = this.useSSL ? 'mqtts' : 'mqtt';
       const url = `${protocol}://${this.host}:${this.port}`;
       const generation = ++this.clientGeneration;
-      const client = new MqttClient({
+      const clientOptions: MqttClientOptions = {
         url,
         clientId,
         persistenceType: 1,
-      });
+      };
+      const client: MqttClient = new MqttClient(clientOptions);
       this.mqttClient = client;
       this.activeSubscriptions.clear();
       this.subscribingTopics.clear();
@@ -256,13 +269,13 @@ export class MqttManagement {
         connectTimeout: this.connectOptions.connectTimeout ?? 5,
         keepAliveInterval: this.connectOptions.keepAliveInterval ?? 60,
         cleanSession: this.connectOptions.cleanSession ?? true,
-        sslOptions: { enableServerCertAuth: true },
+        sslOptions: new SailWatchMqttSslOptions(),
         automaticReconnect: false,
         userName: this.connectOptions.userName,
         password: this.connectOptions.password,
       };
 
-      const response = await client.connect(finalOptions);
+      const response: MqttResponse = await client.connect(finalOptions);
       if (this.disposed || generation !== this.clientGeneration || this.mqttClient !== client) {
         try { await client.destroy(); } catch (_) {}
         return false;
@@ -296,7 +309,7 @@ export class MqttManagement {
 
   // 完整关闭 native client。messageArrived/connectLost 没有 off API，不能用“空回调”冒充注销。
   private async safeDisconnectAndClear(tag = ""): Promise<void> {
-    const client = this.mqttClient;
+    const client: MqttClient | null = this.mqttClient;
     if (!client) {
       this.isConnected = false;
       return;
@@ -389,8 +402,8 @@ export class MqttManagement {
       }
       if (!message) return;
 
-      const topic = message.topic;
-      const messageData = message.payload;
+      const topic: string = message.topic;
+      const messageData: string = message.payload;
       console.info(`收到消息 [${topic}]: ${messageData}`);
       this.handleIncomingMessage(topic, messageData);
     });
@@ -526,7 +539,7 @@ export class MqttManagement {
   }
 
   private async publishDirect(message: PendingMqttMessage): Promise<boolean> {
-    const client = this.mqttClient;
+    const client: MqttClient | null = this.mqttClient;
     const generation = this.clientGeneration;
     if (!client || !this.isConnected || this.closing || this.disposed) return false;
 
@@ -593,7 +606,7 @@ export class MqttManagement {
     const key = `${topic}|${qos}`;
     if (this.activeSubscriptions.has(key) || this.subscribingTopics.has(key)) return;
 
-    const client = this.mqttClient;
+    const client: MqttClient | null = this.mqttClient;
     const generation = this.clientGeneration;
     if (!client || !this.isConnected || this.closing || this.disposed) return;
 
@@ -626,7 +639,7 @@ export class MqttManagement {
   }
 
   private async restoreSubscriptions(): Promise<void> {
-    const client = this.mqttClient;
+    const client: MqttClient | null = this.mqttClient;
     const generation = this.clientGeneration;
     if (!client || !this.isConnected) return;
 
