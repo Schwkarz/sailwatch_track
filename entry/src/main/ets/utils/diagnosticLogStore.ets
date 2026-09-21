@@ -36,6 +36,8 @@ export class DiagnosticLogStore {
   private ready: boolean = false;
   private runState: DiagnosticRunState | null = null;
   private lastHeartbeatWriteAt: number = 0;
+  private lastInputAt: number = 0;
+  private lastInputDetail: string = '';
 
   public setup(filesDir: string): void {
     const requestedLogDir: string = `${filesDir}/diagnostics`;
@@ -115,6 +117,24 @@ export class DiagnosticLogStore {
 
   public getPreviousStatePath(): string {
     return this.previousStatePath;
+  }
+
+  public getRunId(): string {
+    return this.runState?.runId ?? 'unknown-run';
+  }
+
+  public recordInputEvent(action: string, detail: string = ''): void {
+    const now: number = Date.now();
+    this.lastInputAt = now;
+    this.lastInputDetail = `action=${action}${detail.length > 0 ? `,${detail}` : ''}`;
+    this.info('INPUT', this.lastInputDetail);
+  }
+
+  public getRecentInputDetail(maxAgeMs: number = 3000): string {
+    if (this.lastInputAt <= 0 || Date.now() - this.lastInputAt > maxAgeMs) {
+      return 'none';
+    }
+    return this.lastInputDetail;
   }
 
   public recordLifecycle(lifecycle: string, detail: string = ''): void {

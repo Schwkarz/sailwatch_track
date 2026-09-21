@@ -16,6 +16,24 @@ interface PendingMqttMessage {
   qos: MqttQos;
 }
 
+export interface MqttPublishDiagnostics {
+  pendingCount: number;
+  pendingPayloadChars: number;
+  maxPendingCount: number;
+  enqueuedCount: number;
+  publishedCount: number;
+  failedCount: number;
+  droppedCount: number;
+  consecutiveFailures: number;
+  lastPublishDurationMs: number;
+  maxPublishDurationMs: number;
+  lastPublishCompletedAt: number;
+  lastPublishSucceededAt: number;
+  nextPublishRetryAt: number;
+  unhealthyRecycleCount: number;
+  drainActive: boolean;
+}
+
 interface MqttSubscription {
   topic: string;
   qos: MqttQos;
@@ -136,12 +154,31 @@ export class MqttManagement {
 
   private clientId: string = '';    //客户端ID
   private readonly MAX_PENDING_MESSAGES: number = 3600;
+  private readonly MAX_PENDING_PAYLOAD_CHARS: number = 4 * 1024 * 1024;
   private readonly RECONNECT_DELAY_MS: number = 3000;
+  private readonly PUBLISH_RETRY_BASE_MS: number = 1000;
+  private readonly PUBLISH_RETRY_MAX_MS: number = 30000;
+  private readonly UNHEALTHY_FAILURE_THRESHOLD: number = 3;
   private pendingMessages: PendingMqttMessage[] = [];
+  private pendingPayloadChars: number = 0;
+  private maxPendingCount: number = 0;
+  private enqueuedCount: number = 0;
+  private publishedCount: number = 0;
+  private failedCount: number = 0;
+  private droppedCount: number = 0;
+  private consecutiveFailures: number = 0;
+  private lastPublishDurationMs: number = -1;
+  private maxPublishDurationMs: number = 0;
+  private lastPublishCompletedAt: number = 0;
+  private lastPublishSucceededAt: number = 0;
+  private nextPublishRetryAt: number = 0;
+  private unhealthyRecycleCount: number = 0;
   private publishDrainActive: boolean = false;
+  private publishRetryTimer: number | null = null;
   private subscriptions: MqttSubscription[] = [];
   private diagnosticLogger: ((level: string, tag: string, message: string) => void) | null = null;
   private lastOfflineQueueLogAt: number = 0;
+  private lastQueueDropLogAt: number = 0;
 
   private windData: WindDataMessage = {
     windSourceBoatCode: 'null',
@@ -284,7 +321,9 @@ export class MqttManagement {
       console.info(`MQTT连接成功: ${JSON.stringify(response)}`);
       this.diagnostic('INFO', `connected host=${this.host}:${this.port} pending=${this.pendingMessages.length}`);
       this.isConnected = true;
+      this.consecutiveFailures = 0;
       this.clearReconnectTimer();
+      this.clearPublishRetryTimer();
       await this.restoreSubscriptions();
       this.flushPendingMessages().catch((error: Error) => {
         console.error(`启动MQTT发送队列失败: ${formatErrorMessage(error)}`);
@@ -309,6 +348,7 @@ export class MqttManagement {
 
   // 完整关闭 native client。messageArrived/connectLost 没有 off API，不能用“空回调”冒充注销。
   private async safeDisconnectAndClear(tag = ""): Promise<void> {
+    this.clearPublishRetryTimer();
     const client: MqttClient | null = this.mqttClient;
     if (!client) {
       this.isConnected = false;
@@ -336,6 +376,25 @@ export class MqttManagement {
       console.info(`MQTT客户端已销毁(${tag})`);
     } catch (e) {
       console.error(`销毁MQTT客户端失败(${tag}): ${JSON.stringify(e)}`);
+    }
+  }
+
+  private async recycleUnhealthyClient(client: MqttClient, generation: number): Promise<void> {
+    if (generation !== this.clientGeneration || this.mqttClient !== client || this.closing || this.disposed) {
+      return;
+    }
+    this.closing = true;
+    this.unhealthyRecycleCount++;
+    this.diagnostic('WARN',
+      `forcing reconnect after publish failures=${this.consecutiveFailures},` +
+      `recycleCount=${this.unhealthyRecycleCount},pending=${this.pendingMessages.length}`);
+    try {
+      await this.safeDisconnectAndClear('publish-health');
+    } finally {
+      this.closing = false;
+    }
+    if (this.manualReconnect && !this.disposed) {
+      this.scheduleReconnect();
     }
   }
 
@@ -387,6 +446,7 @@ export class MqttManagement {
         console.error(`连接断开原因: ${err.message}`);
       }
       this.isConnected = false;
+      this.clearPublishRetryTimer();
       this.activeSubscriptions.clear();
       this.subscribingTopics.clear();
       if (this.manualReconnect && !this.closing) {
@@ -514,20 +574,48 @@ export class MqttManagement {
       payload,
       qos
     };
-    this.enqueuePendingMessage(message);
+    if (!this.enqueuePendingMessage(message)) {
+      return false;
+    }
     this.flushPendingMessages().catch((error: Error) => {
       console.error(`MQTT发送队列异常: ${formatErrorMessage(error)}`);
     });
     return true;
   }
 
-  private enqueuePendingMessage(message: PendingMqttMessage): void {
-    if (this.pendingMessages.length >= this.MAX_PENDING_MESSAGES) {
-      this.pendingMessages.shift();
-      console.warn('MQTT离线队列已满，丢弃最旧消息');
-      this.diagnostic('ERROR', `queue full, oldest message dropped capacity=${this.MAX_PENDING_MESSAGES}`);
+  private enqueuePendingMessage(message: PendingMqttMessage): boolean {
+    if (message.payload.length > this.MAX_PENDING_PAYLOAD_CHARS) {
+      this.droppedCount++;
+      this.diagnostic('ERROR',
+        `oversized message dropped chars=${message.payload.length},limit=${this.MAX_PENDING_PAYLOAD_CHARS}`);
+      return false;
+    }
+
+    let droppedNow: number = 0;
+    while (this.pendingMessages.length > 0 &&
+      (this.pendingMessages.length >= this.MAX_PENDING_MESSAGES ||
+        this.pendingPayloadChars + message.payload.length > this.MAX_PENDING_PAYLOAD_CHARS)) {
+      const droppedMessage: PendingMqttMessage | undefined = this.pendingMessages.shift();
+      if (droppedMessage) {
+        this.pendingPayloadChars = Math.max(0, this.pendingPayloadChars - droppedMessage.payload.length);
+        droppedNow++;
+        this.droppedCount++;
+      }
+    }
+    if (droppedNow > 0) {
+      console.warn(`MQTT离线队列受限，丢弃最旧消息 ${droppedNow} 条`);
+      const now: number = Date.now();
+      if (now - this.lastQueueDropLogAt >= 10000 || this.droppedCount === droppedNow) {
+        this.lastQueueDropLogAt = now;
+        this.diagnostic('ERROR',
+          `queue limited droppedNow=${droppedNow},droppedTotal=${this.droppedCount},` +
+          `maxCount=${this.MAX_PENDING_MESSAGES},maxChars=${this.MAX_PENDING_PAYLOAD_CHARS}`);
+      }
     }
     this.pendingMessages.push(message);
+    this.pendingPayloadChars += message.payload.length;
+    this.enqueuedCount++;
+    this.maxPendingCount = Math.max(this.maxPendingCount, this.pendingMessages.length);
     if (!this.isConnected) {
       console.warn(`MQTT消息已进入离线队列，当前数量: ${this.pendingMessages.length}`);
       const now: number = Date.now();
@@ -536,12 +624,14 @@ export class MqttManagement {
         this.diagnostic('WARN', `offline queue pending=${this.pendingMessages.length}`);
       }
     }
+    return true;
   }
 
   private async publishDirect(message: PendingMqttMessage): Promise<boolean> {
     const client: MqttClient | null = this.mqttClient;
     const generation = this.clientGeneration;
     if (!client || !this.isConnected || this.closing || this.disposed) return false;
+    const publishStartedAt: number = Date.now();
 
     try {
       await client.publish({
@@ -550,9 +640,22 @@ export class MqttManagement {
         qos: message.qos,
       });
       if (generation !== this.clientGeneration || this.mqttClient !== client) return false;
+      const publishDurationMs: number = Date.now() - publishStartedAt;
+      this.publishedCount++;
+      this.consecutiveFailures = 0;
+      this.lastPublishDurationMs = publishDurationMs;
+      this.maxPublishDurationMs = Math.max(this.maxPublishDurationMs, publishDurationMs);
+      this.lastPublishCompletedAt = Date.now();
+      this.lastPublishSucceededAt = this.lastPublishCompletedAt;
       console.info(`消息已发布 [${message.topic}]: ${message.payload}`);
       return true;
     } catch (err) {
+      const publishDurationMs: number = Date.now() - publishStartedAt;
+      this.failedCount++;
+      this.consecutiveFailures++;
+      this.lastPublishDurationMs = publishDurationMs;
+      this.maxPublishDurationMs = Math.max(this.maxPublishDurationMs, publishDurationMs);
+      this.lastPublishCompletedAt = Date.now();
       console.error(`发布失败: ${JSON.stringify(err)}`);
       this.diagnostic('ERROR', `publish failed topic=${message.topic} pending=${this.pendingMessages.length} error=${JSON.stringify(err)}`);
 
@@ -565,7 +668,9 @@ export class MqttManagement {
       }
       if (generation === this.clientGeneration && this.mqttClient === client) {
         this.isConnected = connected;
-        if (!connected && this.manualReconnect && !this.disposed && !this.closing) {
+        if (connected && this.consecutiveFailures >= this.UNHEALTHY_FAILURE_THRESHOLD) {
+          await this.recycleUnhealthyClient(client, generation);
+        } else if (!connected && this.manualReconnect && !this.disposed && !this.closing) {
           this.scheduleReconnect();
         }
       }
@@ -574,7 +679,7 @@ export class MqttManagement {
   }
 
   private async flushPendingMessages(): Promise<void> {
-    if (this.publishDrainActive) {
+    if (this.publishDrainActive || this.publishRetryTimer !== null) {
       return;
     }
     this.publishDrainActive = true;
@@ -585,20 +690,62 @@ export class MqttManagement {
         if (!published) {
           break;
         }
-        this.pendingMessages.shift();
+        const publishedMessage: PendingMqttMessage | undefined = this.pendingMessages.shift();
+        if (publishedMessage) {
+          this.pendingPayloadChars = Math.max(0, this.pendingPayloadChars - publishedMessage.payload.length);
+        }
       }
     } finally {
       this.publishDrainActive = false;
     }
     if (this.pendingMessages.length > 0 && this.mqttClient && this.isConnected) {
+      this.schedulePublishRetry();
+    }
+  }
+
+  private schedulePublishRetry(): void {
+    if (this.publishRetryTimer !== null || !this.mqttClient || !this.isConnected ||
+      this.closing || this.disposed || this.pendingMessages.length === 0) {
+      return;
+    }
+    const exponent: number = Math.max(0, Math.min(this.consecutiveFailures - 1, 5));
+    const delayMs: number = Math.min(this.PUBLISH_RETRY_MAX_MS,
+      this.PUBLISH_RETRY_BASE_MS * Math.pow(2, exponent));
+    this.nextPublishRetryAt = Date.now() + delayMs;
+    this.diagnostic('WARN',
+      `publish retry scheduled delayMs=${delayMs},failures=${this.consecutiveFailures},` +
+      `pending=${this.pendingMessages.length}`);
+    this.publishRetryTimer = setTimeout(() => {
+      this.publishRetryTimer = null;
+      this.nextPublishRetryAt = 0;
       this.flushPendingMessages().catch((error: Error) => {
         console.error(`继续MQTT发送队列失败: ${formatErrorMessage(error)}`);
       });
-    }
+    }, delayMs);
   }
 
   getPendingMessageCount(): number {
     return this.pendingMessages.length;
+  }
+
+  getPublishDiagnostics(): MqttPublishDiagnostics {
+    return {
+      pendingCount: this.pendingMessages.length,
+      pendingPayloadChars: this.pendingPayloadChars,
+      maxPendingCount: this.maxPendingCount,
+      enqueuedCount: this.enqueuedCount,
+      publishedCount: this.publishedCount,
+      failedCount: this.failedCount,
+      droppedCount: this.droppedCount,
+      consecutiveFailures: this.consecutiveFailures,
+      lastPublishDurationMs: this.lastPublishDurationMs,
+      maxPublishDurationMs: this.maxPublishDurationMs,
+      lastPublishCompletedAt: this.lastPublishCompletedAt,
+      lastPublishSucceededAt: this.lastPublishSucceededAt,
+      nextPublishRetryAt: this.nextPublishRetryAt,
+      unhealthyRecycleCount: this.unhealthyRecycleCount,
+      drainActive: this.publishDrainActive
+    };
   }
 
   async subscribe(topic: string, qos: MqttQos = 1): Promise<void> {
@@ -692,10 +839,19 @@ export class MqttManagement {
     }
   }
 
+  private clearPublishRetryTimer(): void {
+    if (this.publishRetryTimer !== null) {
+      clearTimeout(this.publishRetryTimer);
+      this.publishRetryTimer = null;
+    }
+    this.nextPublishRetryAt = 0;
+  }
+
   async disconnect(): Promise<void> {
     this.manualReconnect = false;
     this.closing = true;
     this.clearReconnectTimer();
+    this.clearPublishRetryTimer();
     try {
       await this.safeDisconnectAndClear("manual");
     } finally {
@@ -709,6 +865,7 @@ export class MqttManagement {
     this.manualReconnect = false;
     this.closing = true;
     this.clearReconnectTimer();
+    this.clearPublishRetryTimer();
     await this.safeDisconnectAndClear("destroy");
   }
 }
