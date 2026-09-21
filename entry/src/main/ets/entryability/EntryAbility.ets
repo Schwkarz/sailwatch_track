@@ -1,4 +1,5 @@
 import { AbilityConstant, ConfigurationConstant, errorManager, UIAbility, Want } from '@kit.AbilityKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { hiAppEvent, hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { diagnosticLogStore } from '../utils/diagnosticLogStore';
@@ -31,6 +32,7 @@ export default class EntryAbility extends UIAbility {
     } catch (error) {
       hilog.error(DOMAIN, 'SailWatchDiag', 'Failed to initialize diagnostics: %{public}s', JSON.stringify(error));
     }
+    this.recordSystemVersion();
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (error) {
@@ -83,7 +85,8 @@ export default class EntryAbility extends UIAbility {
     // Ability has back to background
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
     diagnosticLogStore.recordLifecycle('ability_background',
-      `monitoringActive=${diagnosticLogStore.isMonitoringActive()}`);
+      `monitoringActive=${diagnosticLogStore.isMonitoringActive()},` +
+      `recentInput=${diagnosticLogStore.getRecentInputDetail(5000)}`);
   }
 
   private registerSystemEventWatchers(): void {
@@ -112,15 +115,19 @@ export default class EntryAbility extends UIAbility {
       diagnosticLogStore.error('SYSTEM_EVENT', `fault watcher registration failed error=${JSON.stringify(error)}`);
     }
 
-    // APP_KILLED was added in API 20. A literal name keeps this API 18 project compilable;
-    // newer watches can report the exact system kill reason, while older watches simply provide no callback.
+    // APP_KILLED was added in API 20. Register it only when the watch OS can generate this event.
+    if (deviceInfo.sdkApiVersion < 20) {
+      diagnosticLogStore.warn('SYSTEM_EVENT',
+        `APP_KILLED unsupported sdkApiVersion=${deviceInfo.sdkApiVersion}; requires API 20+`);
+      return;
+    }
     try {
       const killedWatcher: hiAppEvent.Watcher = {
         name: 'sailwatch_app_killed',
         appEventFilters: [
           {
             domain: hiAppEvent.domain.OS,
-            names: ['APP_KILLED']
+            names: [hiAppEvent.event.APP_KILLED]
           }
         ],
         onReceive: (domain: string, appEventGroups: Array<hiAppEvent.AppEventGroup>): void => {
@@ -128,10 +135,21 @@ export default class EntryAbility extends UIAbility {
         }
       };
       hiAppEvent.addWatcher(killedWatcher);
-      diagnosticLogStore.info('SYSTEM_EVENT', 'APP_KILLED watcher registered; callback requires OS API 20+');
+      diagnosticLogStore.info('SYSTEM_EVENT',
+        `APP_KILLED watcher registered sdkApiVersion=${deviceInfo.sdkApiVersion}`);
     } catch (error) {
       diagnosticLogStore.warn('SYSTEM_EVENT',
         `APP_KILLED watcher unavailable on this system error=${JSON.stringify(error)}`);
+    }
+  }
+
+  private recordSystemVersion(): void {
+    try {
+      diagnosticLogStore.info('SYSTEM_INFO',
+        `sdkApiVersion=${deviceInfo.sdkApiVersion},firstApiVersion=${deviceInfo.firstApiVersion},` +
+        `osFullName=${deviceInfo.osFullName}`);
+    } catch (error) {
+      diagnosticLogStore.warn('SYSTEM_INFO', `version query failed error=${JSON.stringify(error)}`);
     }
   }
 
@@ -162,6 +180,12 @@ export default class EntryAbility extends UIAbility {
       for (const eventInfo of eventGroup.appEventInfos) {
         try {
           diagnosticLogStore.recordSystemEvent(eventInfo.name, JSON.stringify(eventInfo.params));
+          if (eventInfo.name === 'APP_KILLED') {
+            diagnosticLogStore.error('APP_KILLED',
+              `reason=${String(eventInfo.params['reason'])},foreground=${String(eventInfo.params['foreground'])},` +
+              `time=${String(eventInfo.params['time'])},` +
+              `appRunningUniqueId=${String(eventInfo.params['app_running_unique_id'])}`);
+          }
         } catch (error) {
           diagnosticLogStore.error('SYSTEM_EVENT',
             `failed to persist event group=${eventGroup.name} error=${JSON.stringify(error)}`);
