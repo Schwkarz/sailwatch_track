@@ -1,6 +1,9 @@
 import { abilityAccessCtrl, common, PermissionRequestResult ,Permissions } from '@kit.AbilityKit';
 import { sensor } from '@kit.SensorServiceKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { batteryInfo, BusinessError, thermal } from '@kit.BasicServicesKit';
+import { KeyCode } from '@kit.InputKit';
+import { connection } from '@kit.NetworkKit';
+import { hidebug } from '@kit.PerformanceAnalysisKit';
 import window from '@ohos.window';
 import { geoLocationManager } from '@kit.LocationKit';
 import http from '@ohos.net.http';
@@ -9,7 +12,7 @@ import { display } from '@kit.ArkUI';
 import { notificationManager } from '@kit.NotificationKit'
 
 import {BleManagement, wt_SensorData, BleDeviceItem, BleSecondDiagnostics} from '../utils/bluetoothManage'
-import {MqttManagement, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data, WindDataMessage} from '../utils/mqtt'
+import {MqttManagement, MqttPublishDiagnostics, mqttUploadData, get_level, level_rec, get_group, group_rec, sailboat_data, original_data, WindDataMessage} from '../utils/mqtt'
 import {DataUploader, UploadData, ble_SensorData} from '../utils/updataloader'
 import {
   OfflineTrainingStore,
@@ -31,6 +34,7 @@ import {
 } from '../utils/offlineModeConfigStore'
 import { GpsKalmanFilter, GpsFilterResult } from '../utils/gpsKalmanFilter'
 import { DiagnosticLogStore, diagnosticLogStore as sharedDiagnosticLogStore } from '../utils/diagnosticLogStore'
+import { DiagnosticLogUploader } from '../utils/diagnosticLogUploader'
 
 //是否为测试环境
 const is_test: boolean = false;
@@ -75,6 +79,7 @@ let lastDiagnosticDisplayState: number = -1;
 const APP_MODE_UNSELECTED: number = 0;
 const APP_MODE_SERVER: number = 1;
 const APP_MODE_OFFLINE: number = 2;
+const ONLINE_MENU_BUTTON_COLOR: number = 0x3c5f7f;
 
 
 // 在接口定义部分添加新的状态类型
@@ -308,6 +313,11 @@ struct Index {
   onlineConfigStore: OnlineTrainingConfigStore = new OnlineTrainingConfigStore();
   offlineModeConfigStore: OfflineModeConfigStore = new OfflineModeConfigStore();
   diagnosticLogStore: DiagnosticLogStore = sharedDiagnosticLogStore;
+  diagnosticLogUploader: DiagnosticLogUploader = new DiagnosticLogUploader();
+  @State isDiagnosticUploadRunning: boolean = false;
+  @State diagnosticUploadStatus: string = '';
+  @State diagnosticUploadProgress: number = 0;
+  @State diagnosticUploadPhase: string = 'idle';
   private hasSetupBleCallbacks: boolean = false;
   private isBleSelectionVisible: boolean = false;
   private offlineStartedAt: number = 0;
@@ -320,6 +330,65 @@ struct Index {
   private isChangingOfflineBle: boolean = false;
   private isChangingOnlineBle: boolean = false;
   private hasAutoStartedOnlineUpload: boolean = false;
+  private lastRuntimeDiagnosticAt: number = 0;
+  private cachedRuntimeDiagnostic: string = 'thermal=-1,netBearer=unknown,pssKb=-1,vmHeapUsedKb=-1,cpu=-1';
+  private thermalCallbackRegistered: boolean = false;
+  private readonly thermalLevelCallback = (level: thermal.ThermalLevel): void => {
+    const message: string = `level=${level},name=${this.thermalLevelName(level)}`;
+    if (level >= thermal.ThermalLevel.HOT) {
+      this.diagnosticLogStore.warn('THERMAL', message);
+    } else {
+      this.diagnosticLogStore.info('THERMAL', message);
+    }
+  };
+
+  private keyName(keyCode: number): string {
+    if (keyCode === KeyCode.KEYCODE_HOME) {
+      return 'CROWN';
+    }
+    if (keyCode === KeyCode.KEYCODE_BACK) {
+      return 'BACK';
+    }
+    if (keyCode === KeyCode.KEYCODE_POWER) {
+      return 'POWER';
+    }
+    if (keyCode === KeyCode.KEYCODE_SLEEP) {
+      return 'SLEEP';
+    }
+    if (keyCode === KeyCode.KEYCODE_VOLUME_UP) {
+      return 'VOLUME_UP';
+    }
+    if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN) {
+      return 'VOLUME_DOWN';
+    }
+    return `KEY_${keyCode}`;
+  }
+
+  private keyPhase(type: KeyType): string {
+    return type === KeyType.Down ? 'DOWN' : 'UP';
+  }
+
+  private handlePhysicalKeyEvent(event: KeyEvent): boolean {
+    const button: string = this.keyName(event.keyCode);
+    const phase: string = this.keyPhase(event.type);
+    this.diagnosticLogStore.recordInputEvent('hardware_button',
+      `button=${button},phase=${phase},keyCode=${event.keyCode},keyType=${event.type},` +
+      `keyText=${JSON.stringify(event.keyText)},keySource=${event.keySource},` +
+      `deviceId=${event.deviceId},eventTimestamp=${event.timestamp}`);
+    // 只旁路记录，不消费按键，继续交给系统和页面原有逻辑处理。
+    return false;
+  }
+
+  private handleDigitalCrownEvent(event: CrownEvent): void {
+    this.diagnosticLogStore.recordInputEvent('digital_crown_rotate',
+      `button=CROWN,action=${event.action},degree=${event.degree},` +
+      `angularVelocity=${event.angularVelocity},eventTimestamp=${event.timestamp}`);
+  }
+
+  private recordBackPressed(page: string, action: string): void {
+    this.diagnosticLogStore.recordInputEvent('hardware_button',
+      `button=BACK,phase=PRESS_CALLBACK,page=${page},result=${action}`);
+  }
 
 
   @Builder
@@ -364,6 +433,9 @@ struct Index {
     .hideTitleBar(true)
     .hideBackButton(true)
     .hideToolBar(true)
+    .focusable(true)
+    .onKeyEventDispatch((event: KeyEvent) => this.handlePhysicalKeyEvent(event))
+    .onDigitalCrown((event: CrownEvent) => this.handleDigitalCrownEvent(event))
   }
 
   // 页面跳转方法
@@ -519,6 +591,41 @@ struct Index {
       return;
     }
     this.pushPage('OnlineSettings');
+  }
+
+  async uploadDiagnosticLogsNow(): Promise<void> {
+    if (this.isStartUpload || this.isOfflineRecording) {
+      this.diagnosticUploadStatus = '请先停止训练';
+      this.diagnosticUploadProgress = 0;
+      this.diagnosticUploadPhase = 'failed';
+      this.diagnosticLogStore.warn('LOG_UPLOAD', 'manual upload blocked because monitoring is active');
+      return;
+    }
+    if (this.isDiagnosticUploadRunning || this.diagnosticLogUploader.isUploading()) {
+      if (this.diagnosticUploadPhase !== 'running') {
+        this.diagnosticUploadPhase = 'running';
+        this.diagnosticUploadStatus = '日志正在上传';
+      }
+      return;
+    }
+
+    this.isDiagnosticUploadRunning = true;
+    this.diagnosticUploadProgress = 0;
+    this.diagnosticUploadPhase = 'running';
+    this.diagnosticUploadStatus = '正在准备日志';
+    try {
+      const uploadedCount: number = await this.diagnosticLogUploader.uploadNow();
+      this.diagnosticUploadProgress = 100;
+      this.diagnosticUploadPhase = 'success';
+      this.diagnosticUploadStatus = uploadedCount > 0 ?
+        `上传成功：${uploadedCount} 个文件` : '上传完成：没有新日志';
+    } catch (error) {
+      this.diagnosticUploadPhase = 'failed';
+      this.diagnosticUploadStatus = '上传失败，将自动重试';
+      this.diagnosticLogStore.warn('LOG_UPLOAD', `manual menu action failed error=${JSON.stringify(error)}`);
+    } finally {
+      this.isDiagnosticUploadRunning = false;
+    }
   }
 
   selectOfflineMode(): void {
@@ -973,7 +1080,10 @@ struct Index {
       .backgroundColor(0x000000)
     }
     .hideTitleBar(true)
-    .onBackPressed(() => true)
+    .onBackPressed(() => {
+      this.recordBackPressed('ModeSelection', 'blocked');
+      return true;
+    })
   }
 
   @Builder
@@ -1090,6 +1200,7 @@ struct Index {
     .onAppear(() => this.onBleSelectionAppear())
     .onDisAppear(() => this.onBleSelectionDisappear())
     .onBackPressed(() => {
+      this.recordBackPressed('BleDeviceSelection', 'pop');
       this.stopBleDeviceScan();
       this.popPage();
       return true;
@@ -1238,7 +1349,10 @@ struct Index {
     .hideTitleBar(true)
     .onAppear(() => this.startOfflineTiltDisplay())
     .onDisAppear(() => this.stopOfflineTiltDisplay())
-    .onBackPressed(() => true)
+    .onBackPressed(() => {
+      this.recordBackPressed('OfflineInterface', 'blocked');
+      return true;
+    })
   }
 
   @Builder
@@ -1308,6 +1422,7 @@ struct Index {
     }
     .hideTitleBar(true)
     .onBackPressed(() => {
+      this.recordBackPressed('OfflineSettings', 'pop');
       this.popPage();
       return true;
     })
@@ -1321,95 +1436,148 @@ struct Index {
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor(Color.White)
-          .margin({ bottom: 12 })
+          .margin({ top: 10, bottom: 6 })
 
-        Button('显示参数')
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x2f9b67)
-          .fontColor(Color.White)
-          .width(150)
-          .height(32)
-          .margin({ bottom: 10 })
-          .onClick(() => this.openDisplaySettings())
+        Scroll() {
+          Column() {
+            Button('显示参数')
+              .fontSize(14)
+              .type(ButtonType.Capsule)
+              .backgroundColor(ONLINE_MENU_BUTTON_COLOR)
+              .fontColor(Color.White)
+              .width(150)
+              .height(40)
+              .margin({ bottom: 8 })
+              .onClick(() => this.openDisplaySettings())
 
-        Button('蓝牙传感器连接')
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x317aff)
-          .fontColor(Color.White)
-          .width(150)
-          .height(32)
-          .margin({ bottom: 10 })
-          .onClick(() => this.changeOnlineBleSensor())
+            Button('蓝牙传感器连接')
+              .fontSize(14)
+              .type(ButtonType.Capsule)
+              .backgroundColor(ONLINE_MENU_BUTTON_COLOR)
+              .fontColor(Color.White)
+              .width(150)
+              .height(40)
+              .margin({ bottom: 8 })
+              .onClick(() => this.changeOnlineBleSensor())
 
-        Text(`平均倾角时间：${this.getOfflineTiltWindowText()}`)
-          .fontSize(11)
-          .fontColor(0x9fc7ff)
-          .margin({ bottom: 6 })
-          .visibility(Visibility.None)
+            Text(`平均倾角时间：${this.getOfflineTiltWindowText()}`)
+              .fontSize(11)
+              .fontColor(0x9fc7ff)
+              .margin({ bottom: 6 })
+              .visibility(Visibility.None)
 
-        Row() {
-          Button('实时')
-            .fontSize(10)
-            .backgroundColor(this.offlineTiltAverageSeconds === 1 ? 0x2f9b67 : 0x555555)
-            .width(55)
-            .height(27)
-            .onClick(() => this.setOfflineTiltAverageSeconds(1))
-          Button('30s')
-            .fontSize(10)
-            .backgroundColor(this.offlineTiltAverageSeconds === 30 ? 0x2f9b67 : 0x555555)
-            .width(55)
-            .height(27)
-            .margin({ left: 5, right: 5 })
-            .onClick(() => this.setOfflineTiltAverageSeconds(30))
-          Button('1min')
-            .fontSize(10)
-            .backgroundColor(this.offlineTiltAverageSeconds === 60 ? 0x2f9b67 : 0x555555)
-            .width(55)
-            .height(27)
-            .onClick(() => this.setOfflineTiltAverageSeconds(60))
+            Row() {
+              Button('实时')
+                .fontSize(10)
+                .backgroundColor(this.offlineTiltAverageSeconds === 1 ? 0x2f9b67 : 0x555555)
+                .width(55)
+                .height(27)
+                .onClick(() => this.setOfflineTiltAverageSeconds(1))
+              Button('30s')
+                .fontSize(10)
+                .backgroundColor(this.offlineTiltAverageSeconds === 30 ? 0x2f9b67 : 0x555555)
+                .width(55)
+                .height(27)
+                .margin({ left: 5, right: 5 })
+                .onClick(() => this.setOfflineTiltAverageSeconds(30))
+              Button('1min')
+                .fontSize(10)
+                .backgroundColor(this.offlineTiltAverageSeconds === 60 ? 0x2f9b67 : 0x555555)
+                .width(55)
+                .height(27)
+                .onClick(() => this.setOfflineTiltAverageSeconds(60))
+            }
+            .margin({ bottom: 10 })
+            .visibility(Visibility.None)
+
+            Button('查看历史报告')
+              .fontSize(14)
+              .type(ButtonType.Capsule)
+              .backgroundColor(ONLINE_MENU_BUTTON_COLOR)
+              .fontColor(Color.White)
+              .width(150)
+              .height(40)
+              .margin({ bottom: 8 })
+              .onClick(() => this.openOfflineHistory())
+
+            Button(this.isDiagnosticUploadRunning ?
+              `正在上传 ${this.diagnosticUploadProgress}%` : '上传日志')
+              .fontSize(14)
+              .type(ButtonType.Capsule)
+              .backgroundColor(ONLINE_MENU_BUTTON_COLOR)
+              .fontColor(Color.White)
+              .width(150)
+              .height(40)
+              .enabled(!this.isDiagnosticUploadRunning)
+              .opacity(this.isDiagnosticUploadRunning ? 0.65 : 1)
+              .margin({ bottom: 6 })
+              .onClick(() => {
+                this.uploadDiagnosticLogsNow();
+              })
+
+            if (this.diagnosticUploadStatus.length > 0) {
+              Column() {
+                Progress({ value: this.diagnosticUploadProgress, total: 100, type: ProgressType.Linear })
+                  .width(150)
+                  .height(8)
+                  .style({ strokeWidth: 8, enableSmoothEffect: false })
+                  .color(this.diagnosticUploadPhase === 'success' ? 0x39c978 :
+                    (this.diagnosticUploadPhase === 'failed' ? 0xe65757 : 0x4aa3ff))
+                  .backgroundColor(0x292929)
+
+                Text(this.diagnosticUploadPhase === 'running' ?
+                  `${this.diagnosticUploadStatus}  ${this.diagnosticUploadProgress}%` :
+                  this.diagnosticUploadStatus)
+                  .fontSize(11)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.diagnosticUploadPhase === 'success' ? 0x62df92 :
+                    (this.diagnosticUploadPhase === 'failed' ? 0xff7777 : Color.White))
+                  .textAlign(TextAlign.Center)
+                  .maxLines(2)
+                  .margin({ top: 4 })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Center)
+              .margin({ bottom: 10 })
+            }
+
+            Button('重新设置训练配置')
+              .fontSize(13)
+              .type(ButtonType.Capsule)
+              .backgroundColor(ONLINE_MENU_BUTTON_COLOR)
+              .fontColor(Color.White)
+              .width(150)
+              .height(40)
+              .margin({ bottom: 8 })
+              .onClick(() => this.openOnlineSettings())
+
+            Button('离线模式')
+              .fontSize(14)
+              .type(ButtonType.Capsule)
+              .backgroundColor(ONLINE_MENU_BUTTON_COLOR)
+              .fontColor(Color.White)
+              .width(150)
+              .height(40)
+              .onClick(() => this.selectOfflineMode())
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Center)
+          .padding({ top: 4, bottom: 28 })
         }
-        .margin({ bottom: 10 })
-        .visibility(Visibility.None)
-
-        Button('查看历史报告')
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x555555)
-          .fontColor(Color.White)
-          .width(150)
-          .height(32)
-          .margin({ bottom: 10 })
-          .onClick(() => this.openOfflineHistory())
-
-        Button('重新设置训练配置')
-          .fontSize(11)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x7a3030)
-          .fontColor(Color.White)
-          .width(150)
-          .height(30)
-          .margin({ bottom: 10 })
-          .onClick(() => this.openOnlineSettings())
-
-        Button('离线模式')
-          .fontSize(12)
-          .type(ButtonType.Capsule)
-          .backgroundColor(0x555555)
-          .fontColor(Color.White)
-          .width(150)
-          .height(32)
-          .onClick(() => this.selectOfflineMode())
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+        .scrollBarColor(0x8aa9c4)
       }
       .width('100%')
       .height('100%')
-      .justifyContent(FlexAlign.Center)
+      .justifyContent(FlexAlign.Start)
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(0x000000)
     }
     .hideTitleBar(true)
     .onBackPressed(() => {
+      this.recordBackPressed('OnlineSettings', 'pop');
       this.popPage();
       return true;
     })
@@ -1472,6 +1640,7 @@ struct Index {
     }
     .hideTitleBar(true)
     .onBackPressed(() => {
+      this.recordBackPressed('DisplaySettings', 'pop');
       this.popPage();
       return true;
     })
@@ -1548,6 +1717,7 @@ struct Index {
       this.refreshOfflineReports();
     })
     .onBackPressed(() => {
+      this.recordBackPressed('OfflineHistory', 'pop');
       this.popPage();
       return true;
     })
@@ -1655,6 +1825,7 @@ struct Index {
     }
     .hideTitleBar(true)
     .onBackPressed(() => {
+      this.recordBackPressed('OfflineReportDetail', 'pop');
       this.popPage();
       return true;
     })
@@ -1698,6 +1869,7 @@ struct Index {
     .hideTitleBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .onBackPressed(() => {
+      this.recordBackPressed('WindInterfaceBuilder', 'pop');
       this.popPage();  // 允许返回上一页
       return true;
     })
@@ -1760,6 +1932,7 @@ struct Index {
     })
     .hideTitleBar(true)
     .onBackPressed(() => {
+      this.recordBackPressed('LevelSelection', 'pop');
       this.popPage();  // 允许返回上一页
       return true;
     })
@@ -1827,6 +2000,7 @@ struct Index {
     }
     .hideTitleBar(true)
     .onBackPressed(() => {
+      this.recordBackPressed('GroupSelection', 'pop');
       this.popPage();
       return true;
     })
@@ -2010,7 +2184,7 @@ struct Index {
     })
     .onDisAppear(() => this.stopOfflineTiltDisplay())
     .onBackPressed(() => {
-
+      this.recordBackPressed('LoadInterface', 'blocked');
       return true;
 
     })
@@ -2074,6 +2248,7 @@ struct Index {
     this.isStartUpload = false;
     this.buttonString = '开始上传';
     this.diagnosticLogStore.recordMonitoring(false, 'online', 'manual_long_press');
+    this.diagnosticLogUploader.noteMonitoringStopped();
     console.info('长按停止上传成功');
 
     // 启动冷却时间
@@ -2109,6 +2284,7 @@ struct Index {
         this.isStartUpload = true;
         this.buttonString = '长按停止';
         this.diagnosticLogStore.recordMonitoring(true, 'online', 'manual_restart');
+        this.diagnosticLogUploader.noteMonitoringStarted();
         this.startOfflineRecording();
         this.connectWatchMqtt();
         this.startMqttSend();
@@ -2123,6 +2299,7 @@ struct Index {
     this.isStartUpload = true;
     this.buttonString = '长按停止';
     this.diagnosticLogStore.recordMonitoring(true, 'online', 'auto_or_menu_start');
+    this.diagnosticLogUploader.noteMonitoringStarted();
     this.startOfflineRecording();
     this.connectWatchMqtt();
     this.startMqttSend();
@@ -2147,6 +2324,7 @@ struct Index {
     this.startOfflineRecording();
     if (this.isOfflineRecording) {
       this.diagnosticLogStore.recordMonitoring(true, 'offline', 'offline_start');
+      this.diagnosticLogUploader.noteMonitoringStarted();
     }
   }
 
@@ -2166,6 +2344,7 @@ struct Index {
         this.stopOfflineLongPressDetection();
         this.stopOfflineRecording();
         this.diagnosticLogStore.recordMonitoring(false, 'offline', 'manual_long_press');
+        this.diagnosticLogUploader.noteMonitoringStopped();
       }
     }, 50);
   }
@@ -2646,6 +2825,15 @@ struct Index {
       this.onlineConfigStore.setup(this.getAbilityContext().filesDir);
       this.offlineModeConfigStore.setup(this.getAbilityContext().filesDir);
       this.diagnosticLogStore.setup(this.getAbilityContext().filesDir);
+      this.diagnosticLogUploader.setup(this.getAbilityContext().filesDir, this.diagnosticLogStore);
+      this.diagnosticLogUploader.setProgressCallback(
+        (progress: number, message: string, phase: string): void => {
+          this.diagnosticUploadProgress = progress;
+          this.diagnosticUploadStatus = message;
+          this.diagnosticUploadPhase = phase;
+          this.isDiagnosticUploadRunning = phase === 'running';
+        }
+      );
       this.diagnosticLogStore.recordLifecycle('page_about_to_appear');
       this.mqttManager.setDiagnosticLogger((level: string, tag: string, message: string): void => {
         if (level === 'ERROR') {
@@ -2662,6 +2850,7 @@ struct Index {
         `state=${this.diagnosticLogStore.getStatePath()},` +
         `previousState=${this.diagnosticLogStore.getPreviousStatePath()}`);
       this.refreshOfflineReports();
+      this.startRuntimeDiagnostics();
     } catch (error) {
       console.error(`初始化离线存储失败: ${JSON.stringify(error)}`);
       this.diagnosticLogStore.error('APP', `storage initialization failed error=${JSON.stringify(error)}`);
@@ -3169,6 +3358,115 @@ struct Index {
     }, intervalMs);
   }
 
+  private thermalLevelName(level: thermal.ThermalLevel): string {
+    switch (level) {
+      case thermal.ThermalLevel.COOL: return 'COOL';
+      case thermal.ThermalLevel.NORMAL: return 'NORMAL';
+      case thermal.ThermalLevel.WARM: return 'WARM';
+      case thermal.ThermalLevel.HOT: return 'HOT';
+      case thermal.ThermalLevel.OVERHEATED: return 'OVERHEATED';
+      case thermal.ThermalLevel.WARNING: return 'WARNING';
+      case thermal.ThermalLevel.EMERGENCY: return 'EMERGENCY';
+      case thermal.ThermalLevel.ESCAPE: return 'ESCAPE';
+      default: return 'UNKNOWN';
+    }
+  }
+
+  private startRuntimeDiagnostics(): void {
+    if (!this.thermalCallbackRegistered) {
+      try {
+        thermal.registerThermalLevelCallback(this.thermalLevelCallback);
+        this.thermalCallbackRegistered = true;
+        this.diagnosticLogStore.info('THERMAL', 'callback registered');
+      } catch (error) {
+        this.diagnosticLogStore.warn('THERMAL', `callback registration failed error=${JSON.stringify(error)}`);
+      }
+    }
+    this.diagnosticLogStore.info('RUNTIME_METRICS', this.collectRuntimeDiagnostics(true));
+  }
+
+  private stopRuntimeDiagnostics(): void {
+    if (!this.thermalCallbackRegistered) {
+      return;
+    }
+    try {
+      thermal.unregisterThermalLevelCallback();
+    } catch (error) {
+      this.diagnosticLogStore.warn('THERMAL', `callback removal failed error=${JSON.stringify(error)}`);
+    }
+    this.thermalCallbackRegistered = false;
+  }
+
+  private collectRuntimeDiagnostics(force: boolean = false): string {
+    const now: number = Date.now();
+    if (!force && now - this.lastRuntimeDiagnosticAt < 12000) {
+      return this.cachedRuntimeDiagnostic;
+    }
+
+    const metrics: string[] = [];
+    try {
+      const level: thermal.ThermalLevel = thermal.getLevel();
+      metrics.push(`thermal=${level}`, `thermalName=${this.thermalLevelName(level)}`);
+    } catch (error) {
+      metrics.push(`thermalError=${JSON.stringify(error)}`);
+    }
+
+    try {
+      metrics.push(`batterySoc=${batteryInfo.batterySOC}`,
+        `batteryTemperatureDeciC=${batteryInfo.batteryTemperature}`,
+        `batteryTemperatureC=${(batteryInfo.batteryTemperature / 10).toFixed(1)}`,
+        `batteryCapacityLevel=${batteryInfo.batteryCapacityLevel}`,
+        `chargingStatus=${batteryInfo.chargingStatus}`,
+        `pluggedType=${batteryInfo.pluggedType}`,
+        `batteryVoltageUv=${batteryInfo.voltage}`,
+        `batteryCurrentMa=${batteryInfo.nowCurrent}`);
+    } catch (error) {
+      metrics.push(`batteryError=${JSON.stringify(error)}`);
+    }
+
+    try {
+      const netHandle: connection.NetHandle = connection.getDefaultNetSync();
+      if (netHandle.netId === 0) {
+        metrics.push('netId=0', 'netBearer=none', 'netUpKbps=-1', 'netDownKbps=-1');
+      } else {
+        const capabilities: connection.NetCapabilities = connection.getNetCapabilitiesSync(netHandle);
+        const bearerNames: string[] = [];
+        for (const bearer of capabilities.bearerTypes) {
+          if (bearer === connection.NetBearType.BEARER_CELLULAR) {
+            bearerNames.push('CELLULAR');
+          } else if (bearer === connection.NetBearType.BEARER_WIFI) {
+            bearerNames.push('WIFI');
+          } else {
+            bearerNames.push(String(bearer));
+          }
+        }
+        metrics.push(`netId=${netHandle.netId}`,
+          `netBearer=${bearerNames.length > 0 ? bearerNames.join('+') : 'unknown'}`,
+          `netUpKbps=${capabilities.linkUpBandwidthKbps ?? -1}`,
+          `netDownKbps=${capabilities.linkDownBandwidthKbps ?? -1}`);
+      }
+    } catch (error) {
+      metrics.push(`netError=${JSON.stringify(error)}`);
+    }
+
+    try {
+      const vmMemory: hidebug.VMMemoryInfo = hidebug.getAppVMMemoryInfo();
+      const systemMemory: hidebug.SystemMemInfo = hidebug.getSystemMemInfo();
+      metrics.push(`pssKb=${hidebug.getPss().toString()}`,
+        `vmHeapUsedKb=${vmMemory.heapUsed.toString()}`,
+        `vmHeapTotalKb=${vmMemory.totalHeap.toString()}`,
+        `nativeAllocatedKb=${Math.round(Number(hidebug.getNativeHeapAllocatedSize()) / 1024)}`,
+        `systemAvailableKb=${systemMemory.availableMem.toString()}`,
+        `cpu=${hidebug.getCpuUsage().toFixed(4)}`);
+    } catch (error) {
+      metrics.push(`resourceError=${JSON.stringify(error)}`);
+    }
+
+    this.lastRuntimeDiagnosticAt = now;
+    this.cachedRuntimeDiagnostic = metrics.join(',');
+    return this.cachedRuntimeDiagnostic;
+  }
+
   //定时监测网络状态
   async startCheckTimer(intervalMs : number = 1000) {
     this.stopCheckTimer();
@@ -3211,11 +3509,40 @@ struct Index {
 
       const diagnosticMode: string = this.appMode === APP_MODE_SERVER ? 'online' :
         (this.appMode === APP_MODE_OFFLINE ? 'offline' : 'unselected');
+      const mqttDiagnostics: MqttPublishDiagnostics = this.mqttManager.getPublishDiagnostics();
+      const sensorSample: wt_SensorData = this.wtBLE.ble_sensorData;
+      const sensorAgeMs: number = sensorSample.timestamp > 0 ? Date.now() - sensorSample.timestamp : -1;
       this.diagnosticLogStore.heartbeat(
         `mode=${diagnosticMode},uploadActive=${this.isStartUpload},localRecording=${this.isOfflineRecording},` +
-        `mqttConnected=${this.mqttManager.isConnected},mqttQueue=${this.mqttManager.getPendingMessageCount()},` +
+        `mqttConnected=${this.mqttManager.isConnected},mqttQueue=${mqttDiagnostics.pendingCount},` +
+        `mqttPendingChars=${mqttDiagnostics.pendingPayloadChars},mqttMaxQueue=${mqttDiagnostics.maxPendingCount},` +
+        `mqttEnqueued=${mqttDiagnostics.enqueuedCount},mqttPublished=${mqttDiagnostics.publishedCount},` +
+        `mqttFailed=${mqttDiagnostics.failedCount},mqttDropped=${mqttDiagnostics.droppedCount},` +
+        `mqttConsecutiveFailures=${mqttDiagnostics.consecutiveFailures},` +
+        `mqttLastPublishMs=${mqttDiagnostics.lastPublishDurationMs},mqttMaxPublishMs=${mqttDiagnostics.maxPublishDurationMs},` +
+        `mqttLastPublishAgeMs=${mqttDiagnostics.lastPublishCompletedAt > 0 ?
+          Date.now() - mqttDiagnostics.lastPublishCompletedAt : -1},mqttDrainActive=${mqttDiagnostics.drainActive},` +
+        `mqttLastSuccessAgeMs=${mqttDiagnostics.lastPublishSucceededAt > 0 ?
+          Date.now() - mqttDiagnostics.lastPublishSucceededAt : -1},` +
+        `mqttRetryInMs=${mqttDiagnostics.nextPublishRetryAt > 0 ?
+          Math.max(0, mqttDiagnostics.nextPublishRetryAt - Date.now()) : -1},` +
+        `mqttUnhealthyRecycle=${mqttDiagnostics.unhealthyRecycleCount},` +
         `gpsAgeMs=${this.latestGpsReceivedAt > 0 ? Date.now() - this.latestGpsReceivedAt : -1},` +
-        `bleSelected=${this.selectedBleDeviceId.length > 0},bleConnected=${this.isbleConnected}`);
+        `rawSpeedMps=${this.speed.toFixed(3)},processedSpeedMps=${this.filteredSpeed.toFixed(3)},` +
+        `gpsAccuracyM=${this.gps_accuracy.toFixed(1)},` +
+        `bleSelected=${this.selectedBleDeviceId.length > 0},bleConnected=${this.isbleConnected},` +
+        `imuAgeMs=${sensorAgeMs},accelXMs2=${sensorSample.acceleration.x.toFixed(3)},` +
+        `accelYMs2=${sensorSample.acceleration.y.toFixed(3)},accelZMs2=${sensorSample.acceleration.z.toFixed(3)},` +
+        `gyroXDegS=${sensorSample.angularVelocity.x.toFixed(3)},` +
+        `gyroYDegS=${sensorSample.angularVelocity.y.toFixed(3)},` +
+        `gyroZDegS=${sensorSample.angularVelocity.z.toFixed(3)},` +
+        `rollDeg=${sensorSample.angle.roll.toFixed(2)},pitchDeg=${sensorSample.angle.pitch.toFixed(2)},` +
+        `yawDeg=${sensorSample.angle.yaw.toFixed(2)},` +
+        this.collectRuntimeDiagnostics());
+
+      const logUploadIdle: boolean = !this.isStartUpload && !this.isOfflineRecording &&
+        !this.isBleScanning && mqttDiagnostics.pendingCount === 0 && !mqttDiagnostics.drainActive;
+      await this.diagnosticLogUploader.tryUploadIfIdle(logUploadIdle);
 
       if (this.selectedBleDeviceId.length === 0) {
         return;
@@ -3578,6 +3905,7 @@ struct Index {
       }
       this.stopNotificationTimer();
       this.stopCheckTimer();
+      this.stopRuntimeDiagnostics();
       this.stopOfflineRecording();
       this.stopUploadTimer();
       sensor.off(sensor.SensorId.HEART_RATE);
