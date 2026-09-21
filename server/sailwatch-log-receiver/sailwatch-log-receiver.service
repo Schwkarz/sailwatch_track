@@ -1,0 +1,32 @@
+[Unit]
+Description=SailWatch authenticated diagnostic log receiver
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nobody
+WorkingDirectory=/opt/sailwatch-log-receiver
+ExecStart=/usr/bin/python3 /opt/sailwatch-log-receiver/server.py --host 172.17.0.1 --port 18091 --root /opt/sailwatch-log-receiver/data --token-file /etc/sailwatch-log-token
+Restart=on-failure
+RestartSec=5
+UMask=027
+
+MemoryMax=64M
+CPUQuota=10%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/sailwatch-log-token
+ReadWritePaths=/opt/sailwatch-log-receiver/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
