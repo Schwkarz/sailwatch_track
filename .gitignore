@@ -10,3 +10,7 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+.DS_Store
+entry/src/main/ets/utils/diagnosticUploadConfig.ets
+*.hap
+*.zip

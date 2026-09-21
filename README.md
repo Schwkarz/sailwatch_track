@@ -16,7 +16,8 @@ SailWatch Track 是面向华为 HarmonyOS 穿戴设备的水上运动数据采�
 - 采集 GPS、心率、手表加速度和外置 IMU 姿态数据。
 - 通过 MQTT 上报航行数据和原始数据。
 - MQTT 断开后使用 3 秒重试定时器手动重连，单次连接超时为 5 秒。
-- 重连成功后恢复风数据订阅，并发送断线期间进入内存队列的消息。
+- 发送失败采用退避重试；连续 3 次失败会重建假连接，重连后恢复订阅并发送队列消息。
+- 离线队列同时限制为 3600 条和约 4 MiB，防止长期弱网导致内存持续增长。
 
 ### 离线模式
 
@@ -27,6 +28,13 @@ SailWatch Track 是面向华为 HarmonyOS 穿戴设备的水上运动数据采�
 - 每次停止记录后生成训练报告。
 - 在手表上查看历史报告、心率折线、横滚倾角折线、航行距离和训练时长。
 - 长按 2 秒停止记录，记录期间禁止进入历史页面，降低误触风险。
+
+### 诊断日志
+
+- 记录表冠、返回键等硬件按键的按下/抬起、页面返回结果，以及表冠旋转数据。
+- 每 15 秒记录网络、MQTT 队列、温度、电量、内存、CPU、GPS、速度和 IMU 摘要。
+- API 20 及以上系统订阅 `APP_KILLED`，同时记录崩溃、卡死和资源超限事件。
+- 停止训练并空闲 30 秒后自动上传有变化的诊断文件，也可在可滚动的在线菜单点击“上传日志”立即上传；界面显示文件处理进度和最终结果，失败会退避重试且不会重复上传相同快照。
 
 ## 技术环境
 
@@ -46,6 +54,9 @@ entry/src/main/ets/
 ├── pages/Index.ets               # 页面、传感器和训练流程编排
 └── utils/
     ├── bluetoothManage.ets       # WT901 扫描、连接和数据解析
+    ├── diagnosticLogStore.ets    # 本地轮转诊断日志与运行状态
+    ├── diagnosticLogUploader.ets # 空闲上传、去重和失败重试
+    ├── diagnosticUploadConfig.example.ets # 日志上传配置示例
     ├── mqtt.ets                  # MQTT 连接、重连、订阅和消息队列
     ├── offlineTrainingStore.ets  # 离线原始数据与训练报告
     └── updataloader.ets          # HTTP 数据上传工具
@@ -84,6 +95,11 @@ entry/src/main/ets/
 - `gps_accuracy_set`
 
 MQTT 凭据和客户端 ID 在 `connectWatchMqtt()` 中设置。正式发布前应将凭据迁移到安全配置，不要提交生产密钥。
+
+日志上传配置不会提交到 Git。首次构建前，将
+`entry/src/main/ets/utils/diagnosticUploadConfig.example.ets` 复制为
+`diagnosticUploadConfig.ets`，再填写接收服务器签发的上传 Token。
+DevEco Studio 的签名证书也需要由开发者在本机自行配置。
 
 ## 权限
 
@@ -136,6 +152,8 @@ records/
 ```
 
 在线训练选项保存在应用沙箱根目录的 `online_training_config.json`。在历史报告列表中点击“删除”后再次点击“确认”，会同时删除对应的原始 JSONL、报告 JSON 和索引项。
+
+诊断文件保存在应用沙箱的 `diagnostics/`，其中 `runtime.log` 最大约 8 MiB，并轮转为一份 `runtime.previous.log`。服务器接收端源码和部署说明位于 `server/sailwatch-log-receiver/`。
 
 蓝牙选择页显示的地址来自 HarmonyOS `ScanResult.deviceId`，是扫描时使用的 BLE 设备地址，不保证等于设备标签上的公共 MAC。若外设使用隐私随机地址，该值可能在不同扫描周期中变化。
 
